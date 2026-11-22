@@ -108,6 +108,25 @@ view — wrong for a 3D mirror (user report). Verified: click inside a ground
 triangle → Transform ▸ Mirror ▸ YZ Plane → copy at −5…−15 in the same
 sketch, still in the model view, one Undo step.
 
+**Plane view** (Shapr3D, user request). Double-clicking a construction
+plane, a planar face or a face of the orientation cube now also flattens the
+view: orthographic, head-on, and — for a plane or face that runs through the
+model — the part on the camera's side cut away (the same clip and caps as
+the flat sketch view), so the far side shows projected onto the plane. A
+cube face names a direction, not a place, so it only flattens. Orbiting away
+(over 10° off head-on, once the flight has landed) restores the projection
+and the whole model; opening a sketch takes over from it
+(`EditorViewModel.PlaneView`, `beginPlaneView` / `endPlaneView` /
+`planeViewCameraMoved`; the viewport reports each camera move). Verified on
+the iPad simulator with the stepped block: double-tap the low step's top
+face (y = 6) → top view, flat, tall half cut at y = 6; orbit → perspective,
+whole part; double-tap the cube's Front → flat front profile.
+True plan views: the turntable used to stop Top / Bottom at ±89° because its
+fixed Y-up look-at degenerates at the pole, so a "flat" top view still showed
+slanted slivers of every tall wall (reported on a real part). The view
+matrix now takes screen-up from the orbit angles (`TurntableCamera.up`, equal
+to the old Y-up result off the pole) and `elevationLimit` is 90°.
+
 **Open:** face-selection mirror (spec §5.6), the
 blue/purple Mirror badges, a "zoom to face" that also fits the face's size
 (today it keeps the current distance, min 14 mm), and a UI test for each

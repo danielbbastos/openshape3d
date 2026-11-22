@@ -343,13 +343,22 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
     func gestureDoubleTapped(at point: CGPoint) {
         // A double-tap on the orientation cube snaps to the face, edge or
-        // corner under it, exactly like a single tap. The tap recognizer
-        // waits for the double-tap to fail, so without this a quick second
-        // tap on the cube fell through to the model behind it.
+        // corner under it like a single tap, and flattens the view into a
+        // 2D projection along that direction (Shapr3D); orbiting away ends
+        // it. (The tap recognizer waits for the double-tap to fail, so a
+        // quick second tap used to fall through to the model.)
         if let renderer, let view,
            let pose = OrientationCube.hitPose(
                at: point, camera: renderer.camera, viewSize: view.bounds.size
            ) {
+            let eye = pose.position - pose.target
+            if simd_length(eye) > 1e-6 {
+                let n = simd_normalize(eye)
+                let plane = SketchPlane.readable(
+                    origin: SIMD3(Double(pose.target.x), Double(pose.target.y), Double(pose.target.z)),
+                    normal: SIMD3(Double(n.x), Double(n.y), Double(n.z)))
+                viewModel.beginPlaneView(plane, cut: false)
+            }
             cameraAnimator?.animate(to: pose, duration: 0.4)
             return
         }
@@ -1026,6 +1035,9 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         if viewModel.lookAtSketchAvailable != available {
             viewModel.lookAtSketchAvailable = available
         }
+        if let planeView = viewModel.planeView {
+            viewModel.planeViewCameraMoved(offAxisDegrees: offAngleDegrees(to: planeView.plane))
+        }
         // Let SwiftUI overlays that reproject world points (dimension labels,
         // plan §C2) re-run their layout as the camera moves.
         viewModel.cameraEpoch &+= 1
@@ -1077,13 +1089,15 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         if !fromFront, simd_dot(normal, renderer.camera.position - originF) < 0 {
             normal = -normal
         }
-        // Turntable angles that put the eye along the plane normal; vertical
-        // planes clamp at the elevation limit (top/bottom-down views).
+        // Turntable angles that put the eye along the plane normal.
         target.elevation = min(
             max(asin(min(max(normal.y, -1), 1)), -TurntableCamera.elevationLimit),
             TurntableCamera.elevationLimit
         )
-        target.azimuth = (abs(normal.x) + abs(normal.z)) > 1e-5 ? atan2(normal.x, normal.z) : 0
+        // A horizontal plane keeps the current heading squared to a
+        // quadrant: looking straight down, the azimuth is the screen roll.
+        target.azimuth = (abs(normal.x) + abs(normal.z)) > 1e-5
+            ? atan2(normal.x, normal.z) : StandardView.nearestQuadrant(renderer.camera.azimuth)
         target.target = originF
         target.distance = max(renderer.camera.distance, 14)
         cameraAnimator?.animate(to: target, duration: 0.4)

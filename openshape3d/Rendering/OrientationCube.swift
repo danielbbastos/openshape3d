@@ -173,8 +173,8 @@ nonisolated enum OrientationCube {
     }
 
     /// Turntable pose with the eye along `normal` (unit, world space).
-    /// Top/bottom clamp to ±elevationLimit (±89°, 1° off plan — Y-up
-    /// turntable) and keep the current azimuth.
+    /// Top/bottom look straight down / up (±elevationLimit = ±90°) and keep
+    /// the current azimuth.
     static func pose(
         lookingAlong normal: SIMD3<Float>, from camera: TurntableCamera
     ) -> TurntableCamera {

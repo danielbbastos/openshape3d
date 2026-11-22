@@ -585,8 +585,7 @@ struct SketchDimensionOverlay: View {
             .font: UIFont.monospacedDigitSystemFont(ofSize: 16, weight: .regular)
         ]).width
         // A projected oblique circle is an ellipse: do not invent vertical
-        // rim points from its horizontal projected radius. Top/Bottom cameras
-        // deliberately clamp one degree shy of normal (elevationLimit = 89°).
+        // rim points from its horizontal projected radius.
         let headOn = viewModel.session.document.sketches.first(where: { $0.id == sketchID })
             .map { (viewModel.cameraControl?.offAxisDegrees(to: $0.plane) ?? 90) < 1.1 } ?? false
         return SketchDiameterDimensionLayout.make(start: start, end: end, anchor: anchor,

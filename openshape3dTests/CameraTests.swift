@@ -258,7 +258,7 @@ final class CameraTests: XCTestCase {
         let right = StandardView.right.applied(to: camera)
         XCTAssertEqual(right.azimuth, .pi / 2, accuracy: 1e-6)
 
-        // Top/bottom stop at the ±89° clamp (1° off a true plan view) and
+        // Top/bottom look straight down / up (±90°) and
         // square the azimuth to the nearest quadrant (the default 36° → 0).
         let top = StandardView.top.applied(to: camera)
         XCTAssertEqual(top.elevation, TurntableCamera.elevationLimit, accuracy: 1e-6)
@@ -361,5 +361,32 @@ final class CameraTests: XCTestCase {
         XCTAssertEqual(StandardView.bottom.applied(to: cam).azimuth, .pi / 2, accuracy: 1e-6)
         cam.azimuth = -100 * .pi / 180
         XCTAssertEqual(StandardView.top.applied(to: cam).azimuth, -.pi / 2, accuracy: 1e-6)
+    }
+
+    /// Top is a true plan view: a vertical wall projects to a line (no
+    /// sliver of its side), and the view matrix stays finite at 90°.
+    func testTopViewLooksStraightDownWithAFiniteViewMatrix() {
+        for azimuth: Float in [0, .pi / 2, .pi, -.pi / 2] {
+            var camera = TurntableCamera()
+            camera.azimuth = azimuth
+            camera.projection = .orthographic
+            let top = StandardView.top.applied(to: camera)
+            let vp = top.viewProjection(aspect: 1.5)
+            for c in 0..<4 { for r in 0..<4 { XCTAssertTrue(vp[c][r].isFinite) } }
+            // The top and bottom of a vertical edge land on the same pixel.
+            let a = vp * SIMD4<Float>(3, 0, -2, 1)
+            let b = vp * SIMD4<Float>(3, 10, -2, 1)
+            XCTAssertEqual(a.x / a.w, b.x / b.w, accuracy: 1e-5)
+            XCTAssertEqual(a.y / a.w, b.y / b.w, accuracy: 1e-5)
+        }
+    }
+
+    /// Below the pole the angle-derived up matches the old fixed Y-up look-at.
+    func testUpMatchesWorldYLookAtOffThePole() {
+        var camera = TurntableCamera()
+        camera.azimuth = 0.7; camera.elevation = 0.4
+        let old = Matrices.lookAt(eye: camera.position, target: camera.target, up: SIMD3(0, 1, 0))
+        let new = camera.viewMatrix
+        for c in 0..<4 { for r in 0..<4 { XCTAssertEqual(old[c][r], new[c][r], accuracy: 1e-5) } }
     }
 }

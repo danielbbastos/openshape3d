@@ -2075,8 +2075,9 @@ final class EditorViewModel {
                 scene.bodies.removeAll { cut.contains($0.id) }
             }
             // The section plane's own pull arrow comes from `pullArrowState`.
-        } else if let keep = sketchKeptNormal, let plane = activeSketch?.plane,
-                  let cut = Self.sketchCut(plane: plane, keep: keep, sceneBounds: scene.worldBounds) {
+        } else if let flat = flatViewCut,
+                  let cut = Self.sketchCut(plane: flat.plane, keep: flat.keep, sceneBounds: scene.worldBounds) {
+            let plane = flat.plane
             // Flat sketch view: the model on the camera's side of the sketch
             // plane is cut away, and the cut faces are filled just BEHIND the
             // sketch so its lines and fills always draw on top of them.
@@ -7030,6 +7031,9 @@ final class EditorViewModel {
     private func sketchViewChanged() {
         // A mirror pick belongs to the sketch it started in.
         pendingSketchMirrorIDs = []
+        // A sketch takes over from a plane view (it restores the projection
+        // first, so leaving the sketch later goes back to the user's own).
+        if activeSketch != nil, planeView != nil { endPlaneView() }
         guard let plane = activeSketch?.plane else {
             sketchKeptNormal = nil
             if let before = orthographicBeforeSketch {
@@ -7046,6 +7050,63 @@ final class EditorViewModel {
         sketchKeptNormal = settings.sketchHidesFront
             ? Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition)
             : nil
+    }
+
+    // MARK: - Plane view (double-click a plane, a face or a cube face)
+
+    /// Looking straight at a plane in a flat projection: double-click a
+    /// construction plane or a planar face, or a face of the orientation
+    /// cube (Shapr3D). Where the plane runs through the model, the part on
+    /// the camera's side is cut away, so the far side shows projected onto
+    /// the plane. Orbiting away ends it and restores the projection.
+    struct PlaneView {
+        var plane: SketchPlane
+        /// The side kept by the cut; nil = no cut (a cube face).
+        var keep: SIMD3<Double>?
+        /// The projection to restore.
+        var orthographicBefore: Bool
+        /// Set once the camera has come head-on; only then does turning
+        /// away end the view (the flight in starts off-axis).
+        var settled = false
+    }
+
+    private(set) var planeView: PlaneView?
+
+    /// Enter a plane view. `cut` false for the cube's standard views, which
+    /// name a direction, not a place.
+    func beginPlaneView(_ plane: SketchPlane, cut: Bool) {
+        if planeView != nil { endPlaneView() }
+        guard !mode.isSketching else { return }   // a sketch has its own flat view
+        let before = orthographicEnabled
+        if !orthographicEnabled { setOrthographic(true) }
+        planeView = PlaneView(
+            plane: plane,
+            keep: cut ? Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition) : nil,
+            orthographicBefore: before)
+    }
+
+    func endPlaneView() {
+        guard let view = planeView else { return }
+        planeView = nil
+        if view.orthographicBefore != orthographicEnabled { setOrthographic(view.orthographicBefore) }
+    }
+
+    /// The viewport reports the camera's angle off the plane view's normal
+    /// as it moves: head-on settles the view, turning away ends it.
+    func planeViewCameraMoved(offAxisDegrees: Double) {
+        guard var view = planeView else { return }
+        if offAxisDegrees < 1 {
+            if !view.settled { view.settled = true; planeView = view }
+        } else if view.settled, offAxisDegrees > Self.lookAtSketchThresholdDegrees {
+            endPlaneView()
+        }
+    }
+
+    /// The cut the scene draws: the open sketch's, else the plane view's.
+    private var flatViewCut: (plane: SketchPlane, keep: SIMD3<Double>)? {
+        if let keep = sketchKeptNormal, let plane = activeSketch?.plane { return (plane, keep) }
+        if let view = planeView, let keep = view.keep { return (view.plane, keep) }
+        return nil
     }
 
     /// The unit normal of `plane` pointing away from `eye` — the side a
@@ -7862,6 +7923,7 @@ final class EditorViewModel {
         // straight at it (spec §7.1, "double-tap a face = zoom to face").
         if let planeHit = PlanePicking.pick(ray: ray, tiles: constructionPlaneTiles),
            bodyHit == nil || planeHit.distance <= bodyHit!.distance + 1e-3 {
+            beginPlaneView(planeHit.tile.plane, cut: true)
             cameraControl?.moveCameraHeadOn(to: planeHit.tile.plane)
             return
         }
@@ -7876,6 +7938,7 @@ final class EditorViewModel {
             // …and a flat face turns the camera head-on to it, from the side
             // the user is looking at it from. A curved face only selects.
             if let plane = worldFacePlane(bodyID: hit.bodyID, triangleIndex: hit.triangleIndex) {
+                beginPlaneView(plane, cut: true)
                 cameraControl?.moveCameraHeadOn(to: plane)
             }
         } else {

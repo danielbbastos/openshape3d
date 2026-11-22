@@ -34,7 +34,10 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     var projection: CameraProjection = .perspective(fovY: TurntableCamera.defaultFovY)
 
     static let defaultFovY: Float = 40 * .pi / 180
-    static let elevationLimit: Float = 89 * .pi / 180
+    /// A true plan view: the view matrix takes its up vector from the
+    /// orbit angles (`up`), so ±90° no longer degenerates the way a fixed
+    /// Y-up look-at did — and Top / Bottom / a horizontal face read as flat.
+    static let elevationLimit: Float = .pi / 2
     /// Farthest a pinch can dolly out, mm (100 m: a room scan still fits).
     static let maxZoomDistance: Float = 100_000
 
@@ -58,7 +61,15 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     }
 
     var viewMatrix: simd_float4x4 {
-        Matrices.lookAt(eye: position, target: target, up: SIMD3(0, 1, 0))
+        Matrices.lookAt(eye: position, target: target, up: up)
+    }
+
+    /// Screen-up in world space: the direction the eye moves as elevation
+    /// grows, always square to the view. Below ±90° it is world Y projected
+    /// onto the view plane (the old fixed Y-up result); at ±90° it stays
+    /// defined, pointing along the azimuth.
+    var up: SIMD3<Float> {
+        SIMD3(-sin(elevation) * sin(azimuth), cos(elevation), -sin(elevation) * cos(azimuth))
     }
 
     /// `centerOffset` moves the image's centre — where the target lands — off
@@ -236,8 +247,7 @@ nonisolated enum StandardView: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// The pose for this view, keeping target/distance/projection. Top and
-    /// Bottom clamp to ±89° (TurntableCamera.elevationLimit) — 1° short of a
-    /// true plan view, because the turntable's fixed Y-up degenerates at ±90°.
+    /// Bottom look straight down / up (±elevationLimit = ±90°).
     /// They square the azimuth up to the nearest quadrant: near-vertical, the
     /// azimuth IS the on-screen roll, and a plan view that keeps an arbitrary
     /// orbit angle comes out rolled by that angle (a 36° tilt was reported
