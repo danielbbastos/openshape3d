@@ -202,7 +202,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             cameraAnimator?.animate(to: pose, duration: 0.4)
             return
         }
-        if viewModel.isPickingSymmetryAxis, let ray = ray(at: point) {
+        if viewModel.isPickingSymmetryAxis || viewModel.isPickingSketchMirrorAxis, let ray = ray(at: point) {
             viewModel.handle(.tap(ray: ray))
             sceneDidChange()
             return
@@ -342,6 +342,17 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
     }
 
     func gestureDoubleTapped(at point: CGPoint) {
+        // A double-tap on the orientation cube snaps to the face, edge or
+        // corner under it, exactly like a single tap. The tap recognizer
+        // waits for the double-tap to fail, so without this a quick second
+        // tap on the cube fell through to the model behind it.
+        if let renderer, let view,
+           let pose = OrientationCube.hitPose(
+               at: point, camera: renderer.camera, viewSize: view.bounds.size
+           ) {
+            cameraAnimator?.animate(to: pose, duration: 0.4)
+            return
+        }
         guard let ray = ray(at: point) else { return }
         viewModel.handle(.doubleTap(ray: ray))
     }
@@ -499,6 +510,11 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
         // Choosing a section plane: taps pick, drags orbit.
         if case .pickingSectionPlane = viewModel.mode {
+            return false
+        }
+
+        // Choosing a mirror plane: the same.
+        if case .pickingMirrorPlane = viewModel.mode {
             return false
         }
 
@@ -1020,6 +1036,12 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
     /// usable to draw in, and by the Look at Sketch button's visibility.
     func offAxisDegrees(to plane: SketchPlane) -> Double {
         offAngleDegrees(to: plane)
+    }
+
+    var cameraEyePosition: SIMD3<Double>? {
+        guard let renderer else { return nil }
+        let eye = renderer.camera.position
+        return SIMD3(Double(eye.x), Double(eye.y), Double(eye.z))
     }
 
     func orientationCubeLabels() -> [OrientationCube.FaceLabel] {

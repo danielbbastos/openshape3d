@@ -109,6 +109,10 @@ enum EditorMode: Equatable {
     /// Section View armed (spec §16.1): the plane tiles are shown; tapping a
     /// world/construction plane tile or a planar face sets the section plane.
     case pickingSectionPlane
+    /// Mirror armed with "Pick a Face or Plane…": the plane tiles are shown;
+    /// tapping a world/construction plane tile or a planar face of any body
+    /// mirrors `EditorViewModel.mirrorTargets` across it.
+    case pickingMirrorPlane
     /// Insert Image (plan §B10, spec §6.3): picked image bytes are waiting in
     /// `EditorViewModel.pendingImageData`; the plane tiles are shown, and the
     /// tapped plane (ground when the tap misses every tile) hosts the image.
@@ -141,6 +145,12 @@ enum EditorMode: Equatable {
     var isSketching: Bool {
         if case .sketching = self { return true }
         return false
+    }
+
+    /// The sketch being edited, or nil when not sketching.
+    var sketchID: SketchID? {
+        if case .sketching(let id, _) = self { return id }
+        return nil
     }
 
     /// The armed sketch tool, or nil when not sketching / no tool armed.

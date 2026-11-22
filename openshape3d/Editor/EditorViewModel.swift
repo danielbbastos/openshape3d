@@ -28,6 +28,7 @@ extension ViewportCameraControl {
     func setFieldOfView(degrees: Double) {}
     var currentGridSpacing: Double { 1 }
     func moveCameraHeadOn(to plane: SketchPlane, fromFront: Bool) { moveCameraHeadOn(to: plane) }
+    var cameraEyePosition: SIMD3<Double>? { nil }
 }
 
 protocol ViewportCameraControl: AnyObject {
@@ -69,6 +70,8 @@ protocol ViewportCameraControl: AnyObject {
     /// World-units-per-gizmo-unit at `origin` (constant on-screen gizmo size).
     /// The 2D move/rotate overlay uses it to project gizmo-local part anchors.
     func gizmoWorldScale(at origin: SIMD3<Float>) -> Float
+    /// The camera's eye in world space — which side of a plane it is on.
+    var cameraEyePosition: SIMD3<Double>? { get }
 }
 
 @MainActor
@@ -77,6 +80,9 @@ final class EditorViewModel {
     let session: DocumentSession
     var mode: EditorMode = .idle {
         didSet {
+            if mode.isSketching != oldValue.isSketching || mode.sketchID != oldValue.sketchID {
+                sketchViewChanged()
+            }
             if !mode.isSketching || mode.sketchTool != nil { sketchTransformActive = false }
             // An Items plane selection lives only while idle.
             if mode != .idle { selectedPlaneID = nil }
@@ -1998,7 +2004,8 @@ final class EditorViewModel {
         // Split tool waits for a cutter plane, while Section View waits for
         // its plane, or while Insert Image waits for its target plane.
         switch mode {
-        case .pickingSketchPlane, .pickingSplitCutter, .pickingSectionPlane, .pickingImagePlane:
+        case .pickingSketchPlane, .pickingSplitCutter, .pickingSectionPlane, .pickingImagePlane,
+             .pickingMirrorPlane:
             // Origin tiles go in unscaled: the renderer resolves their size
             // per frame from its camera (see `worldPlaneTiles`).
             scene.planePickers = PlanePicking.originTiles + constructionPlaneTiles
@@ -2068,6 +2075,32 @@ final class EditorViewModel {
                 scene.bodies.removeAll { cut.contains($0.id) }
             }
             // The section plane's own pull arrow comes from `pullArrowState`.
+        } else if let keep = sketchKeptNormal, let plane = activeSketch?.plane,
+                  let cut = Self.sketchCut(plane: plane, keep: keep, sceneBounds: scene.worldBounds) {
+            // Flat sketch view: the model on the camera's side of the sketch
+            // plane is cut away, and the cut faces are filled just BEHIND the
+            // sketch so its lines and fills always draw on top of them.
+            scene.sectionPlane = SectionPlaneState(
+                point: SIMD3(Float(cut.point.x), Float(cut.point.y), Float(cut.point.z)),
+                normal: SIMD3(Float(cut.keep.x), Float(cut.keep.y), Float(cut.keep.z))
+            )
+            var capPlane = plane
+            capPlane.origin += cut.keep * 0.02
+            let cutBodies = scene.bodies.filter {
+                !$0.isTranslucent && session.document.body(with: $0.id) != nil
+            }
+            for (i, entry) in sectionCaps(plane: capPlane, bodies: cutBodies).enumerated()
+            where !entry.cap.outline.isEmpty && !entry.cap.triangles.isEmpty {
+                var color: SIMD4<Float>
+                if let material = session.document.body(with: entry.id)?.material {
+                    color = SIMD4<Float>(material.baseColor)
+                } else {
+                    let index = session.document.bodies.firstIndex { $0.id == entry.id } ?? i
+                    color = SectionCapKit.defaultColor(index: index)
+                }
+                color.w = 1
+                scene.profileFills.append(SketchFillBatch(triangles: entry.cap.triangles, color: color))
+            }
         }
 
         // Measure/Translate/Align picks: cross markers at each picked point
@@ -4377,11 +4410,95 @@ final class EditorViewModel {
         return options
     }
 
+    /// Mirror ▸ Keep Originals (spec §5.6). Off moves the bodies to the other
+    /// side of the plane instead of adding mirrored copies.
+    var mirrorKeepsOriginals = true
+
+    /// The bodies a "Pick a Face or Plane…" mirror will reflect, held while
+    /// the plane is being picked (the pick tap must not reselect them).
+    private(set) var mirrorTargets: Set<BodyID> = []
+
+    /// Mirror ▸ Pick a Face or Plane…: show the plane tiles; the next tap on
+    /// a tile, a construction plane or a planar face is the mirror plane.
+    func beginMirrorPlanePick() {
+        // Read the sketch target BEFORE cancelTool clears the region pick.
+        let sketchTarget = selection.isEmpty ? modelSketchMirrorTarget : nil
+        guard !selection.isEmpty || sketchTarget != nil else { return }
+        cancelTransientPicks()
+        cancelTool()
+        mirrorTargets = selection
+        mirrorSketchTarget = sketchTarget
+        mode = .pickingMirrorPlane
+    }
+
+    /// The status pill while Section View or Mirror waits for its plane.
+    var planePickPrompt: (icon: String, text: String)? {
+        switch mode {
+        case .pickingSectionPlane:
+            return ("square.split.diagonal.2x2", "Choose a section plane")
+        case .pickingMirrorPlane:
+            return ("rectangle.on.rectangle", "Choose a face or plane to mirror across")
+        default:
+            return nil
+        }
+    }
+
+    /// Cancel on that pill.
+    func cancelPlanePickPrompt() {
+        cancelSectionPlanePick()
+        cancelMirrorPlanePick()
+    }
+
+    func cancelMirrorPlanePick() {
+        guard case .pickingMirrorPlane = mode else { return }
+        selection = mirrorTargets
+        mirrorTargets = []
+        mirrorSketchTarget = nil
+        updateModeForSelection()
+    }
+
+    /// Tap routing while Mirror waits for its plane: a world or construction
+    /// plane tile, or a planar face — the same picks as Section View.
+    private func handleMirrorPlanePick(ray: Ray) {
+        let tiles = worldPlaneTiles + constructionPlaneTiles
+        let tileHit = PlanePicking.pick(ray: ray, tiles: tiles)
+        let bodyHit = HitTester.pickBody(ray: ray, in: scene)
+        let picked: SketchPlane?
+        if let tileHit, bodyHit == nil || tileHit.distance <= bodyHit!.distance + 1e-3 {
+            picked = tileHit.tile.plane
+        } else if let bodyHit {
+            picked = worldFacePlane(bodyID: bodyHit.bodyID, triangleIndex: bodyHit.triangleIndex)
+        } else {
+            picked = nil
+        }
+        // A miss, or a curved face, keeps the picker armed (Cancel leaves).
+        guard let plane = picked else { return }
+        if let target = mirrorSketchTarget {
+            mirrorSketchTarget = nil
+            mirrorTargets = []
+            mode = .idle
+            mirrorSketchShapes(target, across: plane)
+            return
+        }
+        selection = mirrorTargets
+        mirrorTargets = []
+        mode = .idle
+        mirrorSelection(across: plane)
+    }
+
     /// Mirror every selected body across `plane` into new bodies (one undo
-    /// step for multi-selections, plan §B13).
+    /// step for multi-selections, plan §B13). With Keep Originals off the
+    /// sources are removed in the same step, so the bodies "flip over".
     func mirrorSelection(across plane: SketchPlane) {
+        // No bodies but sketch shapes picked in the model view: mirror those.
+        if selection.isEmpty, let target = modelSketchMirrorTarget {
+            mirrorSketchShapes(target, across: plane)
+            return
+        }
         cancelTransientPicks()
         guard !selection.isEmpty else { return }
+        let keepOriginals = mirrorKeepsOriginals
+        let sources = selection
         let n = simd_normalize(plane.normal)
         var document = session.document // local: unique names as we go
         var commands: [DocumentCommand] = []
@@ -4428,7 +4545,7 @@ final class EditorViewModel {
                     kind: .mirror(
                         body: BodyRef(producer: owner.id, bodyID: id),
                         plane: PlaneRef(source: .explicit(plane)),
-                        keepOriginal: true
+                        keepOriginal: keepOriginals
                     ),
                     outputBodyIDs: [copy.id]
                 )
@@ -4439,6 +4556,12 @@ final class EditorViewModel {
         guard !commands.isEmpty else {
             reportFailure("Mirror produced no geometry.")
             return
+        }
+        if !keepOriginals {
+            // Same undo step: one Undo puts the originals back and drops the
+            // copies. The history node above also says keepOriginal: false,
+            // so a rebuild removes the source again rather than reviving it.
+            commands.append(DeleteBodiesCommand(ids: sources, document: session.document))
         }
         session.perform(commands.count == 1
             ? commands[0]
@@ -6470,6 +6593,7 @@ final class EditorViewModel {
 
     func undo() {
         if isPickingSymmetryAxis { cancelSymmetryAxisPick(); return }
+        if isPickingSketchMirrorAxis { cancelSketchMirrorPick(); return }
         if hasPendingRectangle { clearRectanglePlacement(); return }
         // Native three-point construction leaves drawing mode when Undo
         // changes committed history. Pending-placement cancellation above
@@ -6888,6 +7012,69 @@ final class EditorViewModel {
     var lockGridSizeTitle: String {
         let spacing = lockedGridSpacing ?? cameraControl?.currentGridSpacing ?? 1
         return "Lock Grid Size (\(AppSettings.shared.unit.compactLengthString(fromMM: spacing)))"
+    }
+
+    // MARK: - Flat sketch view (Settings ▸ Sketch View)
+
+    /// The projection to put back when the sketch ends; nil while the flat
+    /// sketch view isn't holding the camera.
+    @ObservationIgnored
+    private var orthographicBeforeSketch: Bool?
+
+    /// While sketching with Hide Model in Front of Sketch: the side of the
+    /// sketch plane that stays drawn (unit normal pointing away from where
+    /// the camera stood when the sketch opened). nil = nothing is cut.
+    private(set) var sketchKeptNormal: SIMD3<Double>?
+
+    /// Called whenever the editor enters, leaves or switches sketches.
+    private func sketchViewChanged() {
+        // A mirror pick belongs to the sketch it started in.
+        pendingSketchMirrorIDs = []
+        guard let plane = activeSketch?.plane else {
+            sketchKeptNormal = nil
+            if let before = orthographicBeforeSketch {
+                orthographicBeforeSketch = nil
+                if before != orthographicEnabled { setOrthographic(before) }
+            }
+            return
+        }
+        let settings = AppSettings.shared
+        if settings.flatSketchView, orthographicBeforeSketch == nil {
+            orthographicBeforeSketch = orthographicEnabled
+            if !orthographicEnabled { setOrthographic(true) }
+        }
+        sketchKeptNormal = settings.sketchHidesFront
+            ? Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition)
+            : nil
+    }
+
+    /// The unit normal of `plane` pointing away from `eye` — the side a
+    /// "hide what's in front" cut keeps. nil without a camera.
+    nonisolated static func keptSide(of plane: SketchPlane, eye: SIMD3<Double>?) -> SIMD3<Double>? {
+        guard let eye else { return nil }
+        let n = simd_normalize(plane.normal)
+        return simd_dot(n, eye - plane.origin) >= 0 ? -n : n
+    }
+
+    /// The cut plane for the flat sketch view: just in front of the sketch,
+    /// so faces lying ON the sketch plane (a sketch on a face) stay drawn.
+    /// nil when no body reaches past the sketch plane into the kept side —
+    /// sketching on the ground under a part must not erase the part.
+    nonisolated static func sketchCut(
+        plane: SketchPlane, keep: SIMD3<Double>,
+        sceneBounds: (min: SIMD3<Float>, max: SIMD3<Float>)?
+    ) -> (point: SIMD3<Double>, keep: SIMD3<Double>)? {
+        guard let bounds = sceneBounds else { return nil }
+        let lo = SIMD3<Double>(bounds.min), hi = SIMD3<Double>(bounds.max)
+        var reach = -Double.infinity
+        for i in 0..<8 {
+            let corner = SIMD3(i & 1 == 0 ? lo.x : hi.x,
+                               i & 2 == 0 ? lo.y : hi.y,
+                               i & 4 == 0 ? lo.z : hi.z)
+            reach = max(reach, simd_dot(corner - plane.origin, keep))
+        }
+        guard reach > 0.01 else { return nil }
+        return (plane.origin - keep * 0.01, keep)
     }
 
     /// Re-aim the camera head-on at the active sketch plane.
@@ -7624,6 +7811,8 @@ final class EditorViewModel {
             handleMeasureTap(ray: ray)
         case .pickingSectionPlane:
             handleSectionPlanePick(ray: ray)
+        case .pickingMirrorPlane:
+            handleMirrorPlanePick(ray: ray)
         case .pickingImagePlane:
             handleImagePlanePick(ray: ray)
         case .pickingBlendEdges(let kind):
@@ -7668,13 +7857,26 @@ final class EditorViewModel {
             )
             return
         }
-        if let hit = HitTester.pickBody(ray: ray, in: scene) {
+        let bodyHit = HitTester.pickBody(ray: ray, in: scene)
+        // Double-tap a construction plane (in front of any body): look
+        // straight at it (spec §7.1, "double-tap a face = zoom to face").
+        if let planeHit = PlanePicking.pick(ray: ray, tiles: constructionPlaneTiles),
+           bodyHit == nil || planeHit.distance <= bodyHit!.distance + 1e-3 {
+            cameraControl?.moveCameraHeadOn(to: planeHit.tile.plane)
+            return
+        }
+        if let hit = bodyHit {
             cancelTool()
             selection = [hit.bodyID]
             if let body = session.document.body(with: hit.bodyID), body.primitive != nil {
                 mode = .editingPrimitive(hit.bodyID)
             } else {
                 mode = .selected(hit.bodyID)
+            }
+            // …and a flat face turns the camera head-on to it, from the side
+            // the user is looking at it from. A curved face only selects.
+            if let plane = worldFacePlane(bodyID: hit.bodyID, triangleIndex: hit.triangleIndex) {
+                cameraControl?.moveCameraHeadOn(to: plane)
             }
         } else {
             cameraControl?.fitScene()
@@ -8848,6 +9050,7 @@ final class EditorViewModel {
         if case .translating = mode { return false }
         if case .aligning = mode { return false }
         if case .pickingSectionPlane = mode { return false }
+        if case .pickingMirrorPlane = mode { return false }
         if case .pickingImagePlane = mode { return false }
         guard HitTester.pickBody(ray: ray, in: scene) == nil,
               let hit = profileHit(ray: ray)
@@ -11602,6 +11805,17 @@ final class EditorViewModel {
     /// entities to offset; other tools toggle entity selection, or finalize/
     /// clear pending state on empty space.
     private func handleSketchTap(ray: Ray, tool: SketchTool?) {
+        if isPickingSketchMirrorAxis {
+            // Any line in the sketch, construction lines included; a miss
+            // keeps waiting (Cancel on the prompt, or Undo, leaves).
+            if let raw = rawSketchPoint(from: ray), let sketch = activeSketch,
+               let hit = SketchHitTester.nearestEntity(to: raw, in: sketch.entities.filter {
+                   if case .line = $0 { return true }; return false
+               }, tolerance: entityPickTolerance) {
+                completeSketchMirrorPick(axis: hit.entity.id)
+            }
+            return
+        }
         if isPickingSymmetryAxis {
             if let raw = rawSketchPoint(from: ray), let sketch = activeSketch,
                let hit = SketchHitTester.nearestEntity(to: raw, in: sketch.entities.filter {
@@ -13555,9 +13769,11 @@ final class EditorViewModel {
         guard let rawStart, let rawEnd else { return constraints }
         let d = rawEnd - rawStart
         guard simd_length(d) > 1e-9 else { return constraints }
-        let tol = toleranceDeg * .pi / 180
-        let devHorizontal = atan2(abs(d.y), abs(d.x))
-        let devVertical = atan2(abs(d.x), abs(d.y))
+        // Explicit types: older Swift compilers picked a SwiftUI `Angle`
+        // overload here and refused the comparison below.
+        let tol: Double = toleranceDeg * .pi / 180
+        let devHorizontal: Double = atan2(abs(d.y), abs(d.x))
+        let devVertical: Double = atan2(abs(d.x), abs(d.y))
         return constraints.filter { inferred in
             switch inferred.kind {
             case .horizontal: axisDistanceTolerance.map { AutoConstraintEngine.withinAxisDistance(d.y, tolerance: $0) } ?? (devHorizontal <= tol)
@@ -15318,6 +15534,130 @@ final class EditorViewModel {
         else { return }
         session.perform(command)
         session.save()
+    }
+
+    /// Sketch ▸ Mirror armed: the entities to reflect, held while the user
+    /// taps the line to mirror across. Transient, like the symmetry pick.
+    private(set) var pendingSketchMirrorIDs: [UUID] = []
+    var isPickingSketchMirrorAxis: Bool { !pendingSketchMirrorIDs.isEmpty }
+
+    /// The palette's Mirror while sketching: hold the selected entities and
+    /// wait for a tap on the line to mirror them across. A selection that
+    /// already names its axis (one line plus the shapes) mirrors at once.
+    func beginSketchMirror() {
+        let chosen = sketchMirrorSourceIDs
+        guard mode.isSketching, !chosen.isEmpty, let sketch = activeSketch else { return }
+        cancelSymmetryAxisPick()
+        // Keep the user's selection order where there is one.
+        let ordered = selectedSketchEntityOrder.filter { chosen.contains($0) }
+        let rest = sketch.entities.map(\.id).filter { chosen.contains($0) && !ordered.contains($0) }
+        pendingSketchMirrorIDs = ordered + rest
+    }
+
+    /// What Mirror would reflect: the selected entities, plus the owners of
+    /// selected points — a click near a corner selects the point, and the
+    /// user still means the shape it belongs to.
+    var sketchMirrorSourceIDs: Set<UUID> {
+        guard mode.isSketching else { return [] }
+        return selectedSketchEntityIDs.union(selectedSketchPoints.map(\.entityID))
+    }
+
+    func cancelSketchMirrorPick() {
+        pendingSketchMirrorIDs = []
+    }
+
+    /// Sketch shapes picked in the MODEL view — a clicked-on region (the
+    /// filled shape that opens Extrude) or lines picked with Select — as the
+    /// one sketch they lie in and their entities. Transform ▸ Mirror acts on
+    /// them in 3D, across a face or plane, like a body (Shapr3D).
+    var modelSketchMirrorTarget: (sketchID: SketchID, ids: Set<UUID>)? {
+        if let picked = pickedProfileForMirror { return picked }
+        guard modelSketchSelection.count == 1, let only = modelSketchSelection.first else { return nil }
+        return (only.sketch.id, only.ids)
+    }
+
+    var canMirrorModelSketchSelection: Bool { modelSketchMirrorTarget != nil }
+
+    /// Transform ▸ Mirror is live: bodies, or sketch shapes, are selected.
+    var canMirrorFromModelView: Bool { !selection.isEmpty || canMirrorModelSketchSelection }
+
+    /// A clicked-on sketch region as its sketch and boundary entities —
+    /// clicking inside a closed shape selects the region, not its lines.
+    private var pickedProfileForMirror: (sketchID: SketchID, ids: Set<UUID>)? {
+        guard let context = toolContext, context.sourceBody == nil,
+              let sketchID = context.sketchID else { return nil }
+        let ids = context.profile.sourceEntityIDs
+            .union(context.extraProfiles.flatMap(\.profile.sourceEntityIDs))
+        return ids.isEmpty ? nil : (sketchID, ids)
+    }
+
+    /// Held while "Pick a Face or Plane…" waits, for a sketch-shape mirror.
+    private var mirrorSketchTarget: (sketchID: SketchID, ids: Set<UUID>)?
+
+    /// Mirror sketch shapes across a 3D plane, staying in the model view.
+    /// One undo step; Keep Originals off removes the sources in that step.
+    func mirrorSketchShapes(_ target: (sketchID: SketchID, ids: Set<UUID>), across plane: SketchPlane) {
+        guard let sketch = session.document.sketches.first(where: { $0.id == target.sketchID }) else { return }
+        let sources = sketch.entities.filter { target.ids.contains($0.id) }
+        guard !sources.isEmpty else { return }
+        var commands: [DocumentCommand] = []
+        let added: [SketchEntity]
+        switch SketchPlaneMirror.mirror(sources, on: sketch.plane,
+                                        acrossOrigin: plane.origin, normal: plane.normal) {
+        case .sameSketch(let entities):
+            added = entities
+            commands.append(AddSketchEntitiesCommand(sketchID: sketch.id, entities: entities, title: "Mirror"))
+        case .newSketch(let mirroredPlane, let entities):
+            added = entities
+            let copy = Sketch(name: session.document.uniqueSketchName(), plane: mirroredPlane, entities: entities)
+            commands.append(AddSketchCommand(sketch: copy, title: "Mirror"))
+        }
+        if !mirrorKeepsOriginals {
+            // The copies were appended, so the sources' indices still hold.
+            commands.append(RemoveSketchEntitiesCommand(ids: target.ids, sketch: sketch))
+        }
+        cancelTool()   // the region pick had opened Extrude
+        session.performWithSketchRebuild(CompositeCommand(title: "Mirror", commands: commands),
+                                         sketchID: sketch.id)
+        session.save()
+        mode = .idle
+        selection.removeAll()
+        selectedSketchEntityIDs = Set(added.map(\.id))
+    }
+
+    /// The Cancel button on the sketching pill while a line is being picked
+    /// for Symmetry or for Mirror (title + accessibility id).
+    var sketchAxisPickCancel: (title: String, id: String)? {
+        if isPickingSymmetryAxis { return ("Cancel Symmetry", "CancelSymmetry") }
+        if isPickingSketchMirrorAxis { return ("Cancel Mirror", "CancelSketchMirror") }
+        return nil
+    }
+
+    func cancelSketchAxisPick() {
+        cancelSymmetryAxisPick()
+        cancelSketchMirrorPick()
+    }
+
+    /// The tapped line becomes the mirror axis. If it was part of the
+    /// selection it is the axis, not a copy — so "select everything, then tap
+    /// the centre line" works.
+    func completeSketchMirrorPick(axis axisID: UUID) {
+        guard case .sketching(let sketchID, _) = mode, let sketch = activeSketch,
+              isPickingSketchMirrorAxis else { return }
+        let sources = pendingSketchMirrorIDs.filter { $0 != axisID }
+        guard !sources.isEmpty,
+              let command = MirrorSketchEntitiesCommand(
+                  sketchID: sketchID, sourceEntityIDs: sources,
+                  axisEntityID: axisID, sketch: sketch)
+        else { return }
+        session.perform(command)
+        session.save()
+        cancelSketchMirrorPick()
+        // Select the new copies, so a second Mirror or a Move acts on them.
+        selectedSketchEntityIDs = Set(command.addedEntities.map(\.id))
+        selectedSketchPoints.removeAll()
+        selectedDimensionID = nil
+        selectedConstraintID = nil
     }
 
     /// Remove a dimension (undoable).

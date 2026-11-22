@@ -19,6 +19,100 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-21, view cube double-tap, look at a face, flat sketch view, Mirror across a face
+
+Four user-facing gaps reported while driving the app over MCP:
+
+- **Orientation cube double-tap.** The tap recognizer waits for the
+  double-tap to fail, and `gestureDoubleTapped` went straight to the model,
+  so a quick double-tap on the cube did nothing. It now snaps to the face /
+  edge / corner under it, like a single tap (`ViewportView.gestureDoubleTapped`).
+- **View commands with the window hidden.** `CameraAnimator` runs on a
+  `CADisplayLink`, which does not fire while the app is in the background or
+  its Mac window is covered — `view.top` over MCP reported success and left
+  the camera where it was. A fallback lands the flight at its end pose if it
+  has not finished `duration + 0.25 s` after it started.
+- **Double-tap a planar face or a construction plane** turns the camera
+  head-on to it (spec §7.1 "zoom to face"); a body double-tap still selects
+  as before, a curved face only selects (`handleDoubleTap`).
+- **Flat sketch view** (Settings ▸ Sketch View, both default ON):
+  *Flat View While Sketching* switches to orthographic while a sketch is
+  open and restores the previous projection when it closes;
+  *Hide Model in Front of Sketch* clips the model on the camera's side of
+  the sketch plane (a section clip 0.01 mm in front of the plane, caps filled
+  0.02 mm behind it so the sketch draws on top). No cut when nothing lies
+  behind the plane — sketching on the ground under a part never erases the
+  part (`EditorViewModel.keptSide` / `sketchCut`, `SketchViewCutTests`).
+  Driven by `mode`'s `didSet` (`sketchViewChanged`), so every way in and out
+  of a sketch is covered.
+- **Mirror.** The palette Mirror works on any selection (was exactly one
+  body), offers **Pick a Face or Plane…** (new `EditorMode.pickingMirrorPlane`
+  — world/construction plane tiles or any planar face, Cancel on the status
+  pill) and a **Keep Originals** toggle (off = the sources are removed in the
+  same undo step; the history node records `keepOriginal: false`). The
+  catalog's `transform.mirror` ("Mirror Bodies") was never routed — it now
+  arms the face/plane pick, so Command Search and MCP `commands` list it.
+
+**Older toolchains.** This Mac has Xcode 26.0.1 (Swift 6.2), which fails to
+type-check several expressions the project's Xcode 26.6 accepts. Split, with
+no behaviour change: `DrawingProjection` probes, `DrawingSheet` boxed-label
+corners, `CatmullRomBezier` tangents, `aimedConstraints` (an `Angle`
+overload), `DrawingSheetView` sheet layout, `SketchDimensionOverlay`'s label
+builder (now `labelLeaders` / `labelBadge` / `radiusLockBadge` /
+`valueButton` / `valueText` / `distanceTypeMenu`), `EditorView.viewportChrome`
+and `editorContent` (now staged modifier functions), and two test files
+(`SweepLoftTests`, `BlendImportTests`). The Section/Mirror status pills share
+one branch (`planePickPrompt`). Building there also needs
+`OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -solver-scope-threshold=50000000'`,
+Git LFS for `ThirdParty/OCCT.xcframework`, and, for tests on a 26.0
+simulator, `IPHONEOS_DEPLOYMENT_TARGET=26.0`.
+
+**Verified** on an iPhone 15 Pro simulator over the bridge (port 8799):
+cube tap → Top; `view.isometric` / `view.fit`; double-tap the Step's side
+face → head-on Right; Line on the XY tile → orthographic, front half cut
+away with the step profile filled; Exit Sketching → perspective, whole
+part; Mirror ▸ Pick a Face… on the front face → "Step 2" at z 5…15, 1800 mm³;
+Keep Originals off + YZ → one body, one Undo restores it. Unit: the focused
+classes 138/138; the full unit run passes except three not touched here —
+`AgentMCPTests.testBundledGuideIsTheSkillBody`,
+`HeavyMeshGuardTests.testHeavyMeshBodiesAreNotBooleanCandidates` (the
+locale's thousands separator), and a malloc crash in
+`SpaceMouseTests.testDriverRoutesMotionAndPressesToTheTarget` that
+reproduces alone. UI tests were not run.
+
+**Sketch Mirror** (added the same day). `mirrorSketchSelection` /
+`MirrorSketchEntitiesCommand` (mirror copies + live `.symmetric` links) had
+no UI at all. The sketch palette now has **Mirror**: select shapes, tap
+Mirror, tap any line to mirror across (`beginSketchMirror` /
+`completeSketchMirrorPick`; the tapped line is the axis even if it was in
+the selection; the copies end up selected; Cancel Mirror on the pill, or
+Undo, leaves). Verified on the simulator: a 10×8 rectangle at u 5…15
+mirrored across the u = 0 line to −15…−5. Rectangles get no symmetric link
+(their corners re-sort — see the command); across a SLANTED line a
+rectangle now comes back as its four reflected sides (it used to be a wrong
+box built from two reflected corners).
+
+Two ways people "select a shape" never reached Mirror: clicking a corner
+selects a POINT (its entity now counts — `sketchMirrorSourceIDs`), and
+clicking INSIDE a closed shape in the model view picks the REGION and opens
+Extrude. In the model view, Transform ▸ Mirror now takes that region (its
+`Profile.sourceEntityIDs`), or sketch lines picked with Select, and mirrors
+them IN 3D across a face or plane like a body — the same menu, Pick a Face
+or Plane…, Keep Originals (`modelSketchMirrorTarget` /
+`mirrorSketchShapes`, geometry in `Kernel/SketchPlaneMirror.swift`,
+`SketchPlaneMirrorTests`). A mirror plane at right angles to the sketch
+puts the copy in the same sketch (mirrored across the line where the planes
+meet); any other plane makes a new sketch on the reflected plane. An earlier
+version opened the sketch instead, which also switched on the flat sketch
+view — wrong for a 3D mirror (user report). Verified: click inside a ground
+triangle → Transform ▸ Mirror ▸ YZ Plane → copy at −5…−15 in the same
+sketch, still in the model view, one Undo step.
+
+**Open:** face-selection mirror (spec §5.6), the
+blue/purple Mirror badges, a "zoom to face" that also fits the face's size
+(today it keeps the current distance, min 14 mm), and a UI test for each
+of the four gestures above.
+
 ## Open work — 2026-10-21, five UI tests fail before today's changes too
 
 The full UI suite (2026-10-21 evening, 216 passed) leaves five failing, and

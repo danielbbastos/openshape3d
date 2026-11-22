@@ -40,12 +40,43 @@ final class CameraAnimator {
         let link = CADisplayLink(target: self, selector: #selector(step))
         link.add(to: .main, forMode: .common)
         displayLink = link
+
+        // A display link only fires while the window is drawing frames. With
+        // the app in the background, or its Mac window hidden behind another
+        // one, a view command (View ▸ Top, the agent's `view.top`, Look at
+        // Sketch…) used to report success and leave the camera where it was.
+        // If the flight hasn't landed shortly after it should have, land it.
+        flight &+= 1
+        let current = flight
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.25) { [weak self] in
+            guard let self, self.flight == current, self.displayLink != nil else { return }
+            self.land()
+        }
     }
 
     /// Ends a flight where it is — the user took the camera (SpaceMouse).
     func stop() {
         displayLink?.invalidate()
         displayLink = nil
+    }
+
+    /// Counts flights so a late fallback never lands a superseded one.
+    private var flight = 0
+
+    /// Jump straight to the flight's end pose.
+    private func land() {
+        displayLink?.invalidate()
+        displayLink = nil
+        guard let renderer, let target else { return }
+        // The same four values `step` eases; projection and the rest stay.
+        var camera = renderer.camera
+        camera.target = target.target
+        camera.distance = target.distance
+        camera.azimuth = target.azimuth
+        camera.elevation = target.elevation
+        renderer.camera = camera
+        view?.setNeedsDisplay()
+        cameraChanged?()
     }
 
     @objc private func step() {

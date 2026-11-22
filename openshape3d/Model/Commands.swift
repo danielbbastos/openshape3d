@@ -841,6 +841,20 @@ struct MirrorSketchEntitiesCommand: DocumentCommand {
 
         for id in sourceEntityIDs where id != axisEntityID {
             guard let source = sketch.entities.first(where: { $0.id == id }) else { continue }
+            // A rectangle is axis-aligned; across a SLANTED line its image is
+            // a rotated rectangle, which `.rect` cannot hold (reflecting just
+            // the two stored corners gave a wrong box). It comes back as its
+            // four reflected sides instead, unlinked.
+            let axis = axisB - axisA
+            if case let .rect(_, lo, hi) = source,
+               abs(axis.x) > 1e-9, abs(axis.y) > 1e-9 {
+                let corners = [lo, SIMD2(hi.x, lo.y), hi, SIMD2(lo.x, hi.y)]
+                    .map { reflectPoint($0, acrossA: axisA, b: axisB) }
+                for i in 0..<4 {
+                    entities.append(.line(id: UUID(), a: corners[i], b: corners[(i + 1) % 4]))
+                }
+                continue
+            }
             let mirror = mirroredSketchEntity(source, acrossA: axisA, b: axisB)
             entities.append(mirror)
             for role in source.symmetricPointRoles {

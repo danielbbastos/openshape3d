@@ -90,13 +90,15 @@ final class BlendImportTests: XCTestCase {
         ob += le64(A["me"]!)
         file += block("OB", ob, address: A["ob"]!, sdna: dna.structIndex("Object"), count: 1)
         // Mesh
-        var me = padded("MEPlate", 66) + [0, 0] + le64(A["matarr"]!) + le64(A["mv"]!) + le64(A["mp"]!) + le64(A["ml"]!) + le64(A["uv"]!)
-        me += le32(4) + le32(1) + le32(4) + le16(1) + le16(0) + le32(0)
+        // `cat` instead of long `+` chains: older Swift compilers time out on them.
+        let cat: ([[UInt8]]) -> [UInt8] = { $0.flatMap { $0 } }
+        var me: [UInt8] = cat([padded("MEPlate", 66), [0, 0], le64(A["matarr"]!), le64(A["mv"]!), le64(A["mp"]!), le64(A["ml"]!), le64(A["uv"]!)])
+        me += cat([le32(4), le32(1), le32(4), le16(1), le16(0), le32(0)])
         file += block("ME", me, address: A["me"]!, sdna: dna.structIndex("Mesh"), count: 1)
         var mv: [UInt8] = []
         for p in [(0, 0, 0.5), (1, 0, 0.5), (1, 2, 0.5), (0, 2, 0.5)] as [(Float, Float, Float)] { mv += f32(p.0) + f32(p.1) + f32(p.2) }
         file += block("DATA", mv, address: A["mv"]!, sdna: dna.structIndex("MVert"), count: 4)
-        file += block("DATA", le32(0) + le32(4) + le16(0) + le16(0), address: A["mp"]!, sdna: dna.structIndex("MPoly"), count: 1)
+        file += block("DATA", cat([le32(0), le32(4), le16(0), le16(0)]), address: A["mp"]!, sdna: dna.structIndex("MPoly"), count: 1)
         var ml: [UInt8] = []
         for v in [0, 1, 2, 3] { ml += le32(v) + le32(0) }
         file += block("DATA", ml, address: A["ml"]!, sdna: dna.structIndex("MLoop"), count: 4)
@@ -105,13 +107,13 @@ final class BlendImportTests: XCTestCase {
         file += block("DATA", uv, address: A["uv"]!, sdna: dna.structIndex("MLoopUV"), count: 4)
         file += block("DATA", le64(A["ma"]!), address: A["matarr"]!, sdna: 0, count: 1)
         // Material → MTex → Tex → Image → PackedFile → bytes
-        var ma = padded("MARed", 66) + [0, 0] + f32(1) + f32(0) + f32(0) + f32(1)
+        var ma: [UInt8] = cat([padded("MARed", 66), [0, 0], f32(1), f32(0), f32(0), f32(1)])
         ma += le64(A["mtex"]!) + [UInt8](repeating: 0, count: 8 * 17)
         file += block("MA", ma, address: A["ma"]!, sdna: dna.structIndex("Material"), count: 1)
-        file += block("DATA", le16(0) + le16(1) + le32(0) + le64(A["tex"]!), address: A["mtex"]!, sdna: dna.structIndex("MTex"), count: 1)
-        file += block("TE", padded("TEpaint", 66) + [0, 0] + le16(8) + le16(0) + le32(0) + le64(A["ima"]!), address: A["tex"]!, sdna: dna.structIndex("Tex"), count: 1)
-        file += block("IM", padded("IMpaint.png", 66) + [0, 0] + le64(A["pf"]!) + padded("//textures/paint.png", 1024), address: A["ima"]!, sdna: dna.structIndex("Image"), count: 1)
-        file += block("DATA", le32(png.count) + le32(0) + le64(A["pfdata"]!), address: A["pf"]!, sdna: dna.structIndex("PackedFile"), count: 1)
+        file += block("DATA", cat([le16(0), le16(1), le32(0), le64(A["tex"]!)]), address: A["mtex"]!, sdna: dna.structIndex("MTex"), count: 1)
+        file += block("TE", cat([padded("TEpaint", 66), [0, 0], le16(8), le16(0), le32(0), le64(A["ima"]!)]), address: A["tex"]!, sdna: dna.structIndex("Tex"), count: 1)
+        file += block("IM", cat([padded("IMpaint.png", 66), [0, 0], le64(A["pf"]!), padded("//textures/paint.png", 1024)]), address: A["ima"]!, sdna: dna.structIndex("Image"), count: 1)
+        file += block("DATA", cat([le32(png.count), le32(0), le64(A["pfdata"]!)]), address: A["pf"]!, sdna: dna.structIndex("PackedFile"), count: 1)
         file += block("DATA", [UInt8](png), address: A["pfdata"]!, sdna: 0, count: 1)
         file += block("DNA1", dnaBlock(dna), address: 0xE000, sdna: 0, count: 1)
         file += block("ENDB", [], address: 0, sdna: 0, count: 0)

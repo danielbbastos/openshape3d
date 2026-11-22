@@ -53,6 +53,17 @@ struct SettingsView: View {
                     .accessibilityIdentifier("SettingsDefaultSplineType")
                 }
 
+                Section("Sketch View") {
+                    Toggle("Flat View While Sketching", isOn: $settings.flatSketchView)
+                        .accessibilityIdentifier("SettingsFlatSketchView")
+                    Text("Looks at the sketch plane without perspective, like a drawing.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Hide Model in Front of Sketch", isOn: $settings.sketchHidesFront)
+                        .accessibilityIdentifier("SettingsSketchHidesFront")
+                    Text("Cuts away what sits between you and the sketch plane while you draw.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+
                 SnappingSettingsSection(settings: settings)
 
                 Section("Appearance") {
