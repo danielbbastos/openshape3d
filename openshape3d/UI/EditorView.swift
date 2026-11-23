@@ -1262,7 +1262,9 @@ struct EditorView: View {
     private func viewportChrome(_ viewModel: EditorViewModel) -> some View {
         // On a phone the palette covers a sixth of the width: Zoom to Fit
         // frames, and the view centres, in the strip it leaves visible.
-        ViewportView(viewModel: viewModel,
+        // Built in stages: as one modifier chain this view was too large
+        // for older Swift compilers to type-check in reasonable time.
+        let base = ViewportView(viewModel: viewModel,
                      paletteFrame: horizontalSizeClass == .compact ? paletteFrame : nil,
                      paletteOnRight: settings.paletteOnRight)
             .ignoresSafeArea()
@@ -1395,6 +1397,13 @@ struct EditorView: View {
                 bottomBarHeight = height
             }
             .onChange(of: viewModel.itemsRevealRequest) { _, _ in showItemsPanel = true }
+        return chromeToolbarStage(chromeTopStage(chromeBottomStage(
+            chromeSideStage(base, viewModel), viewModel), viewModel), viewModel)
+    }
+
+    /// Side panels and the deviation key over the viewport.
+    private func chromeSideStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay(alignment: .topTrailing) {
                 // The deviation preview's key, where the Items panel sits
                 // (the viewport's top edge survives a 16:9 crop of a recording).
@@ -1469,6 +1478,11 @@ struct EditorView: View {
                         .padding(.bottom, 8)
                 }
             }
+    }
+
+    /// Bottom-trailing badges and controls over the viewport.
+    private func chromeBottomStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay(alignment: .bottomTrailing) {
                 // Copy badge (spec §5.1): next gizmo drag moves a duplicate.
                 if viewModel.gizmoOrigin != nil {
@@ -1626,6 +1640,11 @@ struct EditorView: View {
                     .padding(.bottom, bottomBarInset)
                 }
             }
+    }
+
+    /// Status pills and notices along the top of the viewport.
+    private func chromeTopStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay(alignment: .top) {
                 if let tool = viewModel.pendingCreateTool {
                     // Modify group armed (pick the operation, then the region).
@@ -1970,6 +1989,11 @@ struct EditorView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.notice)
+    }
+
+    /// Full-screen overlays, the toolbar and the sheets.
+    private func chromeToolbarStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay {
                 if viewModel.isComputingBoolean {
                     VStack(spacing: 12) {
@@ -2333,9 +2357,9 @@ struct EditorView: View {
         viewModel.beginDecal(name: name.isEmpty ? "Decal" : name, image: prepared.image, aspect: prepared.aspect)
     }
 
-    @ViewBuilder
     private func editorContent(_ viewModel: EditorViewModel) -> some View {
-        viewportChrome(viewModel)
+        // In stages, for older Swift compilers (see `viewportChrome`).
+        let base = viewportChrome(viewModel)
             // ONE importer for every Import-menu entry (see `ImportRequest`).
             .fileImporter(
                 isPresented: $showImporter,
@@ -2446,6 +2470,12 @@ struct EditorView: View {
                     viewModel.errorMessage = "Export failed — please try again."
                 }
             }
+        return contentDialogStage(contentSheetStage(base, viewModel), viewModel)
+    }
+
+    /// Document sheets and exporters.
+    private func contentSheetStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .sheet(isPresented: Binding(
                 get: { arPreviewURL != nil },
                 set: { if !$0 { arPreviewURL = nil } }
@@ -2519,6 +2549,11 @@ struct EditorView: View {
                     viewModel.errorMessage = "Export failed — please try again."
                 }
             }
+    }
+
+    /// Dialogs, alerts and the save-error watcher.
+    private func contentDialogStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .confirmationDialog(
                 "Select Through",
                 isPresented: Binding(

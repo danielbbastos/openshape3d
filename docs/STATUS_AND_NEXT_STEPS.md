@@ -19,6 +19,22 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-21, building with Xcode 26.0.1
+
+Xcode 26.0.1 (Swift 6.2) fails to type-check several expressions that
+Xcode 26.6 accepts. They are split up here, with no behaviour change:
+`DrawingProjection` probes, `DrawingSheet` boxed-label corners,
+`CatmullRomBezier` tangents, `aimedConstraints` (explicit `Double`s; an
+`Angle` overload was picked), `DrawingSheetView` sheet layout,
+`SketchDimensionOverlay`'s label builder (now `labelLeaders` / `labelBadge` /
+`radiusLockBadge` / `valueButton` / `valueText` / `distanceTypeMenu`),
+`EditorView.viewportChrome` and `editorContent` (now staged modifier
+functions), and two test files (`SweepLoftTests`, `BlendImportTests`).
+Building there also needs
+`OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -solver-scope-threshold=50000000'`,
+Git LFS for `ThirdParty/OCCT.xcframework`, and, for tests on a 26.0
+simulator, `IPHONEOS_DEPLOYMENT_TARGET=26.0`.
+
 ## Open work — 2026-10-21, five UI tests fail before today's changes too
 
 The full UI suite (2026-10-21 evening, 216 passed) leaves five failing, and

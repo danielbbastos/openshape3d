@@ -13555,9 +13555,11 @@ final class EditorViewModel {
         guard let rawStart, let rawEnd else { return constraints }
         let d = rawEnd - rawStart
         guard simd_length(d) > 1e-9 else { return constraints }
-        let tol = toleranceDeg * .pi / 180
-        let devHorizontal = atan2(abs(d.y), abs(d.x))
-        let devVertical = atan2(abs(d.x), abs(d.y))
+        // Explicit types: older Swift compilers picked a SwiftUI `Angle`
+        // overload here and refused the comparison below.
+        let tol: Double = toleranceDeg * .pi / 180
+        let devHorizontal: Double = atan2(abs(d.y), abs(d.x))
+        let devVertical: Double = atan2(abs(d.x), abs(d.y))
         return constraints.filter { inferred in
             switch inferred.kind {
             case .horizontal: axisDistanceTolerance.map { AutoConstraintEngine.withinAxisDistance(d.y, tolerance: $0) } ?? (devHorizontal <= tol)

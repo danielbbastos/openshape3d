@@ -135,9 +135,20 @@ final class SweepLoftTests: XCTestCase {
     func testSweepOfADenseSplineOutlineWithABoreIsFastAndExact() {
         let n = 1152
         let outerLoop = (0..<n).map { i -> SIMD2<Double> in
-            let phi = Double(i) / Double(n) * 2 * .pi
-            let r = phi <= .pi ? 20 + 10 * (phi / .pi - sin(2 * phi) / (2 * .pi))
-                : (phi <= 1.5 * .pi ? 30 : 30 - 10 * ((phi - 1.5 * .pi) / (0.5 * .pi) - sin(2 * .pi * (phi - 1.5 * .pi) / (0.5 * .pi)) / (2 * .pi)))
+            // Typed parts: older Swift compilers time out on this as one line.
+            let pi = Double.pi
+            let phi: Double = Double(i) / Double(n) * 2 * pi
+            let r: Double
+            if phi <= pi {
+                let rise: Double = phi / pi - sin(2 * phi) / (2 * pi)
+                r = 20 + 10 * rise
+            } else if phi <= 1.5 * pi {
+                r = 30
+            } else {
+                let u: Double = (phi - 1.5 * pi) / (0.5 * pi)
+                let fall: Double = u - sin(2 * pi * u) / (2 * pi)
+                r = 30 - 10 * fall
+            }
             return SIMD2(r * cos(phi), r * sin(phi))
         }
         let outer = Profile(loop: outerLoop, kind: .polygonal, sourceEntityIDs: [])
