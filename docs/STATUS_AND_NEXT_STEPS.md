@@ -19,6 +19,19 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-23, quick viewport taps were dropped
+
+The single-tap recognizer required the double-tap recognizer to fail, and a
+tap that landed while it waited was dropped. Quick taps in different places
+(sketch points ~0.45 s apart) went missing.
+`SplineUITests.testClosedControlSplineIsAnExtrudableProfile` failed about 2
+runs in 5 that way: a three-point spline's curve passed within the pick
+tolerance of the centre, so the extrude tap selected the curve. Now one tap
+recognizer feeds `TapSequencer` (Interaction/), which delivers every tap and
+treats two taps within 0.35 s and 44 pt as a double-tap at the first point.
+A lone tap still waits out that window, as before. `TapSequencerTests`
+covers it; the spline test passed 8 of 8 afterwards.
+
 ## Mission log — 2026-11-21, building with Xcode 26.0.1
 
 Xcode 26.0.1 (Swift 6.2) fails to type-check several expressions that

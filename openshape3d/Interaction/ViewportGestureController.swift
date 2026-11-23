@@ -51,6 +51,8 @@ final class ViewportGestureController: NSObject {
     private weak var orbitRecognizer: UIPanGestureRecognizer?
     /// Set in shouldReceive: the one-finger drag is being driven by the Pencil.
     private var orbitTouchIsPencil = false
+    /// Sorts taps into single and double without dropping any.
+    private var taps = TapSequencer()
     /// Where the one-finger touch actually LANDED, captured in shouldReceive
     /// before the pan recognizer has moved its threshold. See `handleOrbit`.
     private var orbitTouchDown: CGPoint?
@@ -80,12 +82,10 @@ final class ViewportGestureController: NSObject {
         pinch.delegate = self
         view.addGestureRecognizer(pinch)
 
-        let doubleTap = UITapGestureRecognizer(target: self, action: #selector(handleDoubleTap(_:)))
-        doubleTap.numberOfTapsRequired = 2
-        view.addGestureRecognizer(doubleTap)
-
+        // One tap recognizer; `TapSequencer` tells a double-tap from two
+        // single taps. A single tap that required a double-tap recognizer to
+        // fail dropped the next tap if it landed during that wait.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        tap.require(toFail: doubleTap)
         view.addGestureRecognizer(tap)
 
         // Long-press = Select Through (spec §8.3). A held-still touch fires
@@ -347,13 +347,28 @@ final class ViewportGestureController: NSObject {
         guard let view else { return }
         // Shift-click (Selection Extension, spec §8.1) — a hardware keyboard
         // or the Mac; a bare finger tap never carries it.
-        delegate?.gestureTapped(at: gesture.location(in: view),
-                                shift: gesture.modifierFlags.contains(.shift))
+        let tap = TapSequencer.Tap(
+            point: gesture.location(in: view), time: CACurrentMediaTime(),
+            shift: gesture.modifierFlags.contains(.shift))
+        deliver(taps.tap(tap))
+        guard taps.pending != nil else { return }
+        // Not a double-tap once the window closes: deliver it as a single tap.
+        let generation = taps.generation
+        DispatchQueue.main.asyncAfter(deadline: .now() + taps.interval) { [weak self] in
+            guard let self else { return }
+            self.deliver(self.taps.flush(generation: generation))
+        }
     }
 
-    @objc private func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        guard let view else { return }
-        delegate?.gestureDoubleTapped(at: gesture.location(in: view))
+    private func deliver(_ events: [TapSequencer.Event]) {
+        for event in events {
+            switch event {
+            case .single(let tap):
+                delegate?.gestureTapped(at: tap.point, shift: tap.shift)
+            case .double(let tap):
+                delegate?.gestureDoubleTapped(at: tap.point)
+            }
+        }
     }
 
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
