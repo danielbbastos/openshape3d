@@ -91,6 +91,7 @@ final class CameraAnimator {
         camera.distance = start.distance + (target.distance - start.distance) * t
         camera.azimuth = start.azimuth + shortestAngle(from: start.azimuth, to: target.azimuth) * t
         camera.elevation = start.elevation + (target.elevation - start.elevation) * t
+        camera.roll = start.roll + shortestAngle(from: start.roll, to: target.roll) * t
         renderer.camera = camera
         view?.setNeedsDisplay()
         cameraChanged?()

@@ -253,6 +253,7 @@ nonisolated struct CommandRegistry: Sendable {
         AppCommand(id: "view.zoomToSelection", title: "Zoom to Selection", category: .view,
                    chord: nil),
         AppCommand(id: "view.fit", title: "Zoom to Fit", category: .view, chord: nil),
+        AppCommand(id: "view.resetViewAndGrid", title: "Reset View & Grid", category: .view, chord: nil),
         AppCommand(id: "view.nearestOrtho", title: "Nearest Ortho View", category: .view, chord: KeyChord("8", .command)),
         AppCommand(id: "view.rotateLeft15", title: "Rotate View Left by 15°", category: .view, chord: nil),
         AppCommand(id: "view.rotateRight15", title: "Rotate View Right by 15°", category: .view, chord: nil),

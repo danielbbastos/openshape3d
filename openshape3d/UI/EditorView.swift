@@ -1324,6 +1324,7 @@ struct EditorView: View {
                 // chip while drawing.
                 ZStack {
                     OrientationCubeLabels(viewModel: viewModel)
+                    OrientationCubeSpinArrows(viewModel: viewModel)
                     MoveGizmoOverlay(viewModel: viewModel)
                     SnapChipOverlay(viewModel: viewModel)
                 }
@@ -2056,6 +2057,8 @@ struct EditorView: View {
                                 viewModel.applyStandardView(standard)
                             }
                         }
+                        Button("Reset View & Grid") { viewModel.resetViewAndGrid() }
+                            .accessibilityIdentifier("ResetViewAndGrid")
                         Divider()
                         Toggle("Orthographic", isOn: Binding(
                             get: { viewModel.orthographicEnabled },

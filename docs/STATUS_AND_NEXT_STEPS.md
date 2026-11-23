@@ -19,6 +19,49 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-21…23, plane view: the cube, named views, a double-clicked face
+
+The reference documentation on sketch planes lists the cube and Views as ways
+to define a sketch plane; spec §7.2 says a cube face click "enters the 2D
+planar view (rotation arrows appear above the cube to spin the plane in 90°
+steps)" and a double-click resets to the default view.
+
+- **True plan views.** The turntable's fixed Y-up look-at degenerated at the
+  pole, so Top was clamped to 89° and still showed slanted slivers of every
+  tall wall. The view matrix now takes screen-up from the orbit angles
+  (`TurntableCamera.up`, equal to the old Y-up result off the pole) and
+  `elevationLimit` is 90°.
+- **Cube faces and named views** (`enterStandardPlaneView`): the origin
+  plane facing the eye becomes the sketch plane (`workPlane`, the grid moves
+  onto it) and the view turns orthographic and flat. Nothing is cut; the view
+  names a direction. Orbiting more than 10° off ends it and restores the
+  projection (`SketchPlaneNavigation.FlatTracker`). Edges, corners and
+  Isometric define no plane.
+- **Spin arrows.** While such a view is up, two arrows under the cube (the
+  spec says above; moved under on user review) turn
+  the picture 90° about the line of sight (`TurntableCamera.roll`,
+  `spinPlaneView`). Orbiting keeps the spin with drags mapped to the screen;
+  named views, cube snaps and head-on flights stand it upright again.
+- **Cube double-tap** resets to the default view (Views ▸ Isometric). It
+  used to fall through to the model.
+- **Double-click a planar face or a construction plane**: it becomes the
+  sketch plane and the camera turns head-on in a flat projection with the
+  part on the camera's side cut away, so the far side shows projected onto
+  the plane (`enterPlane`, `beginPlaneView(cut: true)`, caps filled like
+  Section View; `keptSide` / `sketchCut`, `SketchViewCutTests`). No cut when
+  nothing lies behind the plane. A curved face only selects.
+- **Views ▸ Reset View & Grid** (`view.resetViewAndGrid`): the home view,
+  the grid back on the ground, no plane defined.
+- The sketch-plane grid gets a small depth bias so it wins over the face it
+  lies on instead of flickering with it.
+
+Inferred, not confirmed against the reference: named views flatten and use the plane
+through the origin with no cut; the grid stays on the defined plane after
+orbiting. The spin arrows show for named views as well as cube faces.
+
+**Open:** hidden-line display in the flat view; the cube's right-click
+menu (Default View, Top View, Zoom to Fit); edge hits on the cube.
+
 ## Mission log — 2026-11-21, Mirror: any selection, a picked plane, sketches, nothing selected
 
 **Bodies.** The palette Mirror works on any selection (was exactly one

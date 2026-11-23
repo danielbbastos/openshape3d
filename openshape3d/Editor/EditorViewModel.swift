@@ -28,6 +28,8 @@ extension ViewportCameraControl {
     func setFieldOfView(degrees: Double) {}
     var currentGridSpacing: Double { 1 }
     func moveCameraHeadOn(to plane: SketchPlane, fromFront: Bool) { moveCameraHeadOn(to: plane) }
+    var cameraEyePosition: SIMD3<Double>? { nil }
+    func spinView(degrees: Double) {}
 }
 
 protocol ViewportCameraControl: AnyObject {
@@ -69,6 +71,10 @@ protocol ViewportCameraControl: AnyObject {
     /// World-units-per-gizmo-unit at `origin` (constant on-screen gizmo size).
     /// The 2D move/rotate overlay uses it to project gizmo-local part anchors.
     func gizmoWorldScale(at origin: SIMD3<Float>) -> Float
+    /// The camera's eye in world space — which side of a plane it is on.
+    var cameraEyePosition: SIMD3<Double>? { get }
+    /// Turn the picture about the line of sight (the cube's spin arrows).
+    func spinView(degrees: Double)
 }
 
 @MainActor
@@ -80,6 +86,9 @@ final class EditorViewModel {
             // A sketch Mirror's line pick belongs to the sketch it started in.
             if mode.sketchID != oldValue.sketchID { pendingSketchMirrorIDs = [] }
             if !mode.isSketching || mode.sketchTool != nil { sketchTransformActive = false }
+            // A sketch takes over from a plane view (which puts the user's
+            // projection back first).
+            if mode.isSketching, planeView != nil { endPlaneView() }
             // An Items plane selection lives only while idle.
             if mode != .idle { selectedPlaneID = nil }
         }
@@ -1373,7 +1382,8 @@ final class EditorViewModel {
         var scene = ViewportScene(bodies: drawables)
         scene.facePatches = patches
         scene.decals = decalDrawables(drawn: Set(drawables.map(\.id)))
-        scene.gridPlane = activeSketch?.plane ?? (gridPosition == .zx ? nil : gridPosition.plane)
+        scene.gridPlane = activeSketch?.plane ?? workPlane
+            ?? (gridPosition == .zx ? nil : gridPosition.plane)
         scene.lockedGridSpacing = lockedGridSpacing
         scene.surfaceAnalysis = surfaceAnalysis
 
@@ -2071,6 +2081,33 @@ final class EditorViewModel {
                 scene.bodies.removeAll { cut.contains($0.id) }
             }
             // The section plane's own pull arrow comes from `pullArrowState`.
+        } else if let flat = flatViewCut,
+                  let cut = Self.sketchCut(plane: flat.plane, keep: flat.keep, sceneBounds: scene.worldBounds) {
+            let plane = flat.plane
+            // Flat sketch view: the model on the camera's side of the sketch
+            // plane is cut away, and the cut faces are filled just BEHIND the
+            // sketch so its lines and fills always draw on top of them.
+            scene.sectionPlane = SectionPlaneState(
+                point: SIMD3(Float(cut.point.x), Float(cut.point.y), Float(cut.point.z)),
+                normal: SIMD3(Float(cut.keep.x), Float(cut.keep.y), Float(cut.keep.z))
+            )
+            var capPlane = plane
+            capPlane.origin += cut.keep * 0.02
+            let cutBodies = scene.bodies.filter {
+                !$0.isTranslucent && session.document.body(with: $0.id) != nil
+            }
+            for (i, entry) in sectionCaps(plane: capPlane, bodies: cutBodies).enumerated()
+            where !entry.cap.outline.isEmpty && !entry.cap.triangles.isEmpty {
+                var color: SIMD4<Float>
+                if let material = session.document.body(with: entry.id)?.material {
+                    color = SIMD4<Float>(material.baseColor)
+                } else {
+                    let index = session.document.bodies.firstIndex { $0.id == entry.id } ?? i
+                    color = SectionCapKit.defaultColor(index: index)
+                }
+                color.w = 1
+                scene.profileFills.append(SketchFillBatch(triangles: entry.cap.triangles, color: color))
+            }
         }
 
         // Measure/Translate/Align picks: cross markers at each picked point
@@ -6975,6 +7012,12 @@ final class EditorViewModel {
            !view.isHeadOn(to: plane) {
             finishSketch()
         }
+        // Outside a sketch a named view also defines the sketch plane (§2.3).
+        if let eye = SketchPlaneNavigation.eyeDirection(of: view) {
+            enterStandardPlaneView(facing: eye)
+        } else {
+            endPlaneView()
+        }
         cameraControl?.animateToStandardView(view)
     }
 
@@ -7011,6 +7054,7 @@ final class EditorViewModel {
     /// View ▸ Nearest Ortho View: square up to the closest of the six views.
     func nearestOrthoView() {
         if case .sketching = mode { finishSketch() }
+        endPlaneView()
         cameraControl?.animateToNearestOrthoView()
     }
 
@@ -7034,7 +7078,43 @@ final class EditorViewModel {
         }
     }
 
-    var gridPosition: GridPosition = .zx
+    var gridPosition: GridPosition = .zx {
+        didSet { workPlane = nil }
+    }
+
+    /// The plane the grid was moved to: by a cube face or named view, or by
+    /// a double-click on a face or plane (both define a sketch plane,
+    /// spec §2.3). It stays after orbiting, until
+    /// Reset View & Grid or Grid Position clears it.
+    private(set) var workPlane: SketchPlane?
+
+    /// A cube face or named view: that origin plane becomes the sketch plane
+    /// and the view flattens. Nothing is cut; the view names a direction.
+    func enterStandardPlaneView(facing eye: SIMD3<Double>) {
+        guard !mode.isSketching else { return }
+        guard let plane = SketchPlaneNavigation.originPlane(facing: eye) else {
+            endPlaneView()
+            return
+        }
+        workPlane = plane
+        beginPlaneView(plane, cut: false)
+    }
+
+    /// A double-clicked face or construction plane becomes the sketch plane.
+    private func enterPlane(_ plane: SketchPlane) {
+        workPlane = plane
+        beginPlaneView(plane, cut: true)
+        cameraControl?.moveCameraHeadOn(to: plane)
+    }
+
+    /// Views ▸ Reset View & Grid: the home view, with the grid back on the
+    /// ground and no sketch plane defined.
+    func resetViewAndGrid() {
+        if mode.isSketching { finishSketch() }
+        endPlaneView()
+        gridPosition = .zx
+        cameraControl?.animateToStandardView(.isometric)
+    }
 
     /// View ▸ Lock Grid Size: the spacing the grid froze at, nil = follows zoom.
     private(set) var lockedGridSpacing: Double?
@@ -7047,6 +7127,102 @@ final class EditorViewModel {
     var lockGridSizeTitle: String {
         let spacing = lockedGridSpacing ?? cameraControl?.currentGridSpacing ?? 1
         return "Lock Grid Size (\(AppSettings.shared.unit.compactLengthString(fromMM: spacing)))"
+    }
+
+    // MARK: - Plane view (double-click a plane, a face or a cube face)
+
+    /// Looking straight at a plane in a flat projection: double-click a
+    /// construction plane or a planar face, or a face of the orientation
+    /// cube. Where the plane runs through the model, the part on
+    /// the camera's side is cut away, so the far side shows projected onto
+    /// the plane. Orbiting away ends it and restores the projection.
+    struct PlaneView {
+        var plane: SketchPlane
+        /// The side kept by the cut; nil = no cut (a cube face).
+        var keep: SIMD3<Double>?
+        /// The projection to restore.
+        var orthographicBefore: Bool
+        /// Unit vector toward the eye once landed. Signed, so a flight from
+        /// Front to Back doesn't count as landed before it has left.
+        var facing: SIMD3<Double>
+        var tracker = SketchPlaneNavigation.FlatTracker()
+    }
+
+    private(set) var planeView: PlaneView?
+
+    /// Enter a plane view. `cut` false for the cube's standard views, which
+    /// name a direction, not a place.
+    func beginPlaneView(_ plane: SketchPlane, cut: Bool) {
+        if planeView != nil { endPlaneView() }
+        guard !mode.isSketching else { return }   // a sketch has its own flat view
+        let before = orthographicEnabled
+        if !orthographicEnabled { setOrthographic(true) }
+        let keep = cut ? Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition) : nil
+        planeView = PlaneView(
+            plane: plane,
+            keep: keep,
+            orthographicBefore: before,
+            facing: keep.map { -$0 } ?? simd_normalize(plane.normal))
+    }
+
+    /// A cube face or named view shows arrows under the cube that spin the
+    /// plane in 90° steps (spec §7.2).
+    var canSpinPlaneView: Bool { planeView != nil && planeView?.keep == nil }
+
+    func spinPlaneView(clockwise: Bool) {
+        guard canSpinPlaneView else { return }
+        cameraControl?.spinView(degrees: clockwise ? -90 : 90)
+    }
+
+    func endPlaneView() {
+        guard let view = planeView else { return }
+        planeView = nil
+        if view.orthographicBefore != orthographicEnabled { setOrthographic(view.orthographicBefore) }
+    }
+
+    /// The viewport reports the camera's angle off the plane view's normal
+    /// as it moves: head-on settles the view, turning away ends it.
+    func planeViewCameraMoved(offAxisDegrees: Double) {
+        guard var view = planeView else { return }
+        let tracked = view.tracker
+        view.tracker.cameraMoved(offAxisDegrees: offAxisDegrees, leaveDegrees: Self.lookAtSketchThresholdDegrees)
+        guard view.tracker != tracked else { return }
+        if view.tracker.isFlat { planeView = view } else { endPlaneView() }
+    }
+
+    /// The cut the scene draws while a plane view is up.
+    private var flatViewCut: (plane: SketchPlane, keep: SIMD3<Double>)? {
+        if let view = planeView, let keep = view.keep { return (view.plane, keep) }
+        return nil
+    }
+
+    /// The unit normal of `plane` pointing away from `eye` — the side a
+    /// "hide what's in front" cut keeps. nil without a camera.
+    nonisolated static func keptSide(of plane: SketchPlane, eye: SIMD3<Double>?) -> SIMD3<Double>? {
+        guard let eye else { return nil }
+        let n = simd_normalize(plane.normal)
+        return simd_dot(n, eye - plane.origin) >= 0 ? -n : n
+    }
+
+    /// The cut plane for the flat sketch view: just in front of the sketch,
+    /// so faces lying ON the sketch plane (a sketch on a face) stay drawn.
+    /// nil when no body reaches past the sketch plane into the kept side —
+    /// sketching on the ground under a part must not erase the part.
+    nonisolated static func sketchCut(
+        plane: SketchPlane, keep: SIMD3<Double>,
+        sceneBounds: (min: SIMD3<Float>, max: SIMD3<Float>)?
+    ) -> (point: SIMD3<Double>, keep: SIMD3<Double>)? {
+        guard let bounds = sceneBounds else { return nil }
+        let lo = SIMD3<Double>(bounds.min), hi = SIMD3<Double>(bounds.max)
+        var reach = -Double.infinity
+        for i in 0..<8 {
+            let corner = SIMD3(i & 1 == 0 ? lo.x : hi.x,
+                               i & 2 == 0 ? lo.y : hi.y,
+                               i & 4 == 0 ? lo.z : hi.z)
+            reach = max(reach, simd_dot(corner - plane.origin, keep))
+        }
+        guard reach > 0.01 else { return nil }
+        return (plane.origin - keep * 0.01, keep)
     }
 
     /// Re-aim the camera head-on at the active sketch plane.
@@ -7804,8 +7980,9 @@ final class EditorViewModel {
         }
     }
 
-    /// Shapr3D: double-tap selects the whole body; on empty space, fit view.
-    /// While sketching, double-tap selects the tapped entity's whole
+    /// Double-tap selects the whole body and, on a flat face, looks
+    /// straight at it in a plane view; a construction plane gets the same
+    /// view. On empty space, fit view. While sketching, double-tap selects the tapped entity's whole
     /// connected chain (spec §1.10, endpoint adjacency).
     private func handleDoubleTap(ray: Ray) {
         if case .sketching = mode {
@@ -7831,13 +8008,26 @@ final class EditorViewModel {
             )
             return
         }
-        if let hit = HitTester.pickBody(ray: ray, in: scene) {
+        let bodyHit = HitTester.pickBody(ray: ray, in: scene)
+        // Double-tap a construction plane (in front of any body): look
+        // straight at it (spec §7.1, "double-tap a face = zoom to face").
+        if let planeHit = PlanePicking.pick(ray: ray, tiles: constructionPlaneTiles),
+           bodyHit == nil || planeHit.distance <= bodyHit!.distance + 1e-3 {
+            enterPlane(planeHit.tile.plane)
+            return
+        }
+        if let hit = bodyHit {
             cancelTool()
             selection = [hit.bodyID]
             if let body = session.document.body(with: hit.bodyID), body.primitive != nil {
                 mode = .editingPrimitive(hit.bodyID)
             } else {
                 mode = .selected(hit.bodyID)
+            }
+            // …and a flat face turns the camera head-on to it, from the side
+            // the user is looking at it from. A curved face only selects.
+            if let plane = worldFacePlane(bodyID: hit.bodyID, triangleIndex: hit.triangleIndex) {
+                enterPlane(plane)
             }
         } else {
             cameraControl?.fitScene()
