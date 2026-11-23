@@ -54,7 +54,7 @@ extension CommandRegistry {
         "bool.union", "bool.subtract", "bool.intersect",
 
         // Transform.
-        "model.move", "transform.scaleUniform", "transform.pattern",
+        "model.move", "transform.scaleUniform", "transform.pattern", "transform.mirror",
 
         // Direct modeling — the face tools shipped 2026-08-29.
         "model.deleteFace", "model.replaceFace", "model.imprint",
@@ -213,6 +213,10 @@ extension EditorViewModel {
         case "transform.pattern":
             guard canBeginPattern else { return false }
             beginPattern()
+            return true
+        case "transform.mirror":
+            // Mirror Bodies: pick the face or plane to mirror across.
+            beginMirror()
             return true
 
         // MARK: Edit

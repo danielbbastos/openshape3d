@@ -120,6 +120,7 @@ struct ToolPaletteView: View {
         + [.item(sketchTool("Offset", "square.on.square.dashed", .offset)),
            .item(sketchTool("Trim", "scissors", .trim)),
            .item(sketchTool("Project", "square.on.square.dashed", .project)),
+           .item(sketchMirrorItem),
            .group(constrainGroup),
            .group(symbolGroup),
            .item(constructItem),
@@ -181,8 +182,15 @@ struct ToolPaletteView: View {
                        active: viewModel.isScaleToolActive,
                        enabled: !viewModel.selection.isEmpty, tint: .purple,
                        begin: { viewModel.beginScaleTool() }, cancel: { viewModel.cancelScaleTool() }),
-            ToolItem(id: "Mirror", label: "Mirror", icon: "rectangle.on.rectangle",
-                     enabled: viewModel.selection.count == 1, menu: .mirror),
+            // Bodies, or sketch shapes picked in the model view: the same
+            // face / plane menu either way.
+            // Nothing selected: Mirror asks what to mirror, then the plane.
+            viewModel.canMirrorFromModelView
+                ? ToolItem(id: "Mirror", label: "Mirror", icon: "rectangle.on.rectangle", menu: .mirror)
+                : toggleItem("Mirror", "rectangle.on.rectangle", "MirrorButton",
+                             active: viewModel.isMirrorPickActive, enabled: true, tint: .blue,
+                             begin: { viewModel.beginMirror() },
+                             cancel: { viewModel.cancelPlanePickPrompt() }),
             toggleItem("Move", "arrow.up.and.down.and.arrow.left.and.right", "TranslateButton",
                        active: viewModel.isMoveToolActive,
                        enabled: !viewModel.selection.isEmpty, tint: .purple,
@@ -282,6 +290,21 @@ struct ToolPaletteView: View {
         ToolItem(id: "Select", label: "Select", icon: "cursorarrow.and.square.on.square.dashed",
                  active: viewModel.selectModeActive, accessibilityID: "SelectModeButton",
                  run: { viewModel.toggleSelectMode() })
+    }
+
+    /// Sketch ▸ Mirror: select shapes, tap Mirror, then tap the line to
+    /// mirror them across (tap again to cancel the pick).
+    private var sketchMirrorItem: ToolItem {
+        ToolItem(id: "SketchMirror", label: "Mirror", icon: "rectangle.on.rectangle",
+                 enabled: viewModel.isPickingSketchMirrorAxis || !viewModel.sketchMirrorSourceIDs.isEmpty,
+                 active: viewModel.isPickingSketchMirrorAxis, accessibilityID: "SketchMirrorButton",
+                 run: {
+                     if viewModel.isPickingSketchMirrorAxis {
+                         viewModel.cancelSketchMirrorPick()
+                     } else {
+                         viewModel.beginSketchMirror()
+                     }
+                 })
     }
 
     private var constructItem: ToolItem {
@@ -501,17 +524,30 @@ struct ToolPaletteView: View {
 
     private var mirrorMenu: some View {
         Menu {
-            ForEach(Array(viewModel.mirrorPlaneOptions.enumerated()), id: \.offset) { _, option in
-                Button(option.label) {
-                    viewModel.mirrorSelection(across: option.plane)
-                    expandedGroupID = nil
+            // Any planar face or plane on screen — the common case: mirror a
+            // half across its own cut face, or a part across a side face.
+            Button {
+                viewModel.beginMirrorPlanePick()
+                expandedGroupID = nil
+            } label: {
+                Label("Pick a Face or Plane…", systemImage: "hand.tap")
+            }
+            .accessibilityIdentifier("MirrorPickPlane")
+            Section("Mirror Across") {
+                ForEach(Array(viewModel.mirrorPlaneOptions.enumerated()), id: \.offset) { _, option in
+                    Button(option.label) {
+                        viewModel.mirrorSelection(across: option.plane)
+                        expandedGroupID = nil
+                    }
                 }
             }
+            Toggle("Keep Originals", isOn: $viewModel.mirrorKeepsOriginals)
+                .accessibilityIdentifier("MirrorKeepOriginals")
         } label: {
             paletteIcon("rectangle.on.rectangle", label: "Mirror")
                 .foregroundStyle(Color.primary)
         }
-        .disabled(viewModel.selection.count != 1)
+        .disabled(!viewModel.canMirrorFromModelView)
     }
 
     private var insertSymbolMenu: some View {

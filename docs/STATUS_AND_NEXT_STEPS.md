@@ -19,6 +19,59 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-21, Mirror: any selection, a picked plane, sketches, nothing selected
+
+**Bodies.** The palette Mirror works on any selection (was exactly one
+body), offers **Pick a Face or Plane…** (`EditorMode.pickingMirrorPlane`:
+world/construction plane tiles or any planar face, Cancel on the status
+pill) and a **Keep Originals** toggle (off = the sources are removed in the
+same undo step; the history node records `keepOriginal: false`). The tiles
+are drawn over the model, so a tap on one wins over a body behind it. The
+catalog's `transform.mirror` ("Mirror Bodies") was never routed; it now
+starts Mirror, so Command Search and MCP `commands` list it. The Section
+and Mirror status pills share one branch (`planePickPrompt`).
+
+**Sketch Mirror.** `mirrorSketchSelection` / `MirrorSketchEntitiesCommand`
+(mirror copies + live `.symmetric` links) had no UI. The sketch palette now
+has **Mirror**: select shapes, tap Mirror, tap any line to mirror across
+(`beginSketchMirror` / `completeSketchMirrorPick`; the tapped line is the
+axis even if it was in the selection; the copies end up selected; Cancel
+Mirror on the pill, or Undo, leaves). Clicking a corner selects a POINT; its
+entity now counts (`sketchMirrorSourceIDs`). Rectangles get no symmetric
+link (their corners re-sort); across a SLANTED line a rectangle now comes
+back as its four reflected sides (it used to be a wrong box built from two
+reflected corners).
+
+**Sketch shapes in 3D.** Clicking inside a closed shape in the model view
+picks the region (and opens Extrude). Transform ▸ Mirror now takes that
+region (its `Profile.sourceEntityIDs`), or sketch lines picked with Select,
+and mirrors them in 3D across a face or plane like a body: the same menu,
+Pick a Face or Plane…, Keep Originals (`modelSketchMirrorTarget` /
+`mirrorSketchShapes`, geometry in `Kernel/SketchPlaneMirror.swift`,
+`SketchPlaneMirrorTests`). A mirror plane at right angles to the sketch puts
+the copy in the same sketch (mirrored across the line where the planes
+meet); any other plane makes a new sketch on the reflected plane.
+
+**Nothing selected**. The Mirror button is live with an empty
+selection: it asks "Choose a body or shape to mirror"
+(`EditorMode.pickingMirrorSource`), the tap picks the nearest body or closed
+sketch shape, then the "Choose a face or plane to mirror across" step
+mirrors it (`beginMirror` / `handleMirrorSourcePick`). With a selection the
+button still opens the Mirror menu. The pick takes the smallest thing under
+the tap: a sketch shape drawn on a body's face sits at the face's depth and
+wins the near-tie with the body, and it is outlined while the plane is
+chosen.
+
+**Verified** on the simulator: the Step's front face → "Step 2" at z 5…15,
+1800 mm³; Keep Originals off + YZ → one body, one Undo restores it; a 10×8
+rectangle at u 5…15 mirrored across the u = 0 line to −15…−5; a ground
+triangle → Transform ▸ Mirror ▸ YZ Plane → copy at −5…−15 in the same
+sketch; nothing selected: a rectangle on the step's top face, mirrored
+across the front face (z = 5) → copy at z 7…13, same sketch.
+
+**Open:** face-selection mirror (spec §5.6), the blue/purple Mirror badges,
+a UI test for each flow.
+
 ## Mission log — 2026-11-21, view commands with the window hidden
 
 `CameraAnimator` runs on a `CADisplayLink`, which does not fire while the

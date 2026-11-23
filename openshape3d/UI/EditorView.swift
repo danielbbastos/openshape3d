@@ -422,6 +422,7 @@ struct EditorView: View {
 
     private func sketchStatusText(_ viewModel: EditorViewModel) -> String {
         if viewModel.isPickingSymmetryAxis { return "Select a line for the axis of symmetry" }
+        if viewModel.isPickingSketchMirrorAxis { return "Tap a line to mirror across" }
         guard let sketch = viewModel.activeSketch else { return "Sketching" }
         if case .sketching(_, let tool) = viewModel.mode {
             switch tool {
@@ -1734,9 +1735,9 @@ struct EditorView: View {
                                 .controlSize(.small)
                                 .accessibilityIdentifier("LookAtSketch")
                             }
-                            if viewModel.isPickingSymmetryAxis {
-                                Button("Cancel Symmetry") { viewModel.cancelSymmetryAxisPick() }
-                                    .accessibilityIdentifier("CancelSymmetry")
+                            if let cancel = viewModel.sketchAxisPickCancel {
+                                Button(cancel.title) { viewModel.cancelSketchAxisPick() }
+                                    .accessibilityIdentifier(cancel.id)
                             }
                             Button("Exit Sketching") {
                                 viewModel.finishSketch()
@@ -1756,13 +1757,11 @@ struct EditorView: View {
                         .controlSize(.small)
                         .keyboardShortcut(.cancelAction)
                     }
-                } else if case .pickingSectionPlane = viewModel.mode {
-                    statusPill(
-                        icon: "square.split.diagonal.2x2",
-                        text: "Choose a section plane"
-                    ) {
+                } else if let prompt = viewModel.planePickPrompt {
+                    // Section View and Mirror both wait for a plane here.
+                    statusPill(icon: prompt.icon, text: prompt.text) {
                         Button("Cancel") {
-                            viewModel.cancelSectionPlanePick()
+                            viewModel.cancelPlanePickPrompt()
                         }
                         .controlSize(.small)
                         .keyboardShortcut(.cancelAction)

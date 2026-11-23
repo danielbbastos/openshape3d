@@ -202,7 +202,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             cameraAnimator?.animate(to: pose, duration: 0.4)
             return
         }
-        if viewModel.isPickingSymmetryAxis, let ray = ray(at: point) {
+        if viewModel.isPickingSymmetryAxis || viewModel.isPickingSketchMirrorAxis, let ray = ray(at: point) {
             viewModel.handle(.tap(ray: ray))
             sceneDidChange()
             return
@@ -499,6 +499,14 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
         // Choosing a section plane: taps pick, drags orbit.
         if case .pickingSectionPlane = viewModel.mode {
+            return false
+        }
+
+        // Choosing a mirror plane: the same.
+        if case .pickingMirrorPlane = viewModel.mode {
+            return false
+        }
+        if case .pickingMirrorSource = viewModel.mode {
             return false
         }
 
