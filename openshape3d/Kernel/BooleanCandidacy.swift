@@ -23,8 +23,14 @@ nonisolated enum BooleanCandidacy {
         body.brep != nil || body.render.triangleCount <= meshTriangleCap
     }
 
+    /// What a tool may change unasked: what can be seen. A hidden reference
+    /// mesh used to be cut along with the part (crash report 2026-11-22).
+    static func toolTargets(in bodies: [Body]) -> [Body] {
+        bodies.filter { !$0.isHidden && allows($0) }
+    }
+
     static func heavyBodies(in bodies: [Body]) -> [Body] {
-        bodies.filter { !allows($0) }
+        bodies.filter { !$0.isHidden && !allows($0) }
     }
 
     static func refusalMessage(for body: Body) -> String {
