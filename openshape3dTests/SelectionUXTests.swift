@@ -437,6 +437,23 @@ final class SelectionUXTests: XCTestCase {
         XCTAssertFalse(vm.sketchOnHoveredPlane())
         XCTAssertEqual(vm.mode, .idle)
         XCTAssertTrue(vm.session.document.sketches.isEmpty)
+
+        // The hovered plane beats one a named view defined earlier.
+        vm.applyStandardView(.front)
+        vm.hoverRay = Ray(origin: SIMD3(0.5, Float(box.max.y) + 10, 0.5), direction: SIMD3(0, -1, 0))
+        XCTAssertTrue(vm.sketchOnHoveredPlane())
+        XCTAssertEqual(vm.activeSketch?.plane.origin.y ?? -1, Double(box.max.y), accuracy: 1e-3)
+        vm.finishSketch()
+
+        // Tool first, then hover + Space: that tool, on the hovered plane.
+        vm.resetViewAndGrid()
+        vm.startSketch(tool: .circle)
+        XCTAssertTrue(vm.isPickingSketchPlane)
+        vm.hoverRay = Ray(origin: SIMD3(50, 10, 50), direction: SIMD3(0, -1, 0))
+        XCTAssertTrue(vm.sketchOnHoveredPlane())
+        XCTAssertEqual(vm.mode.sketchTool, .circle)
+        XCTAssertEqual(vm.activeSketch?.plane, .ground)
+        vm.finishSketch()
     }
 
     // MARK: - Sketch plane picker: face / curved face / miss (QA-01)

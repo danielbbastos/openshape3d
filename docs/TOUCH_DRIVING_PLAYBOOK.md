@@ -25,7 +25,7 @@ History (647,54), Items panel (773,54).
 Sketch mode palette: Line (46,277) Rect (46,341) Circle (46,405) Arc
 (46,469) Ellipse (46,533) Polygon (46,597) … Delete (45,1087). Header:
 Exit Sketching is at (603,118) under "Sketching on plane", (686,118) under
-"Sketching on ground plane"; Look at Sketch (539,118) when the camera is
+"Sketching on ground plane"; Normal to Sketch (539,118) when the camera is
 off-axis. Read the header from a screenshot before tapping.
 
 Extrude bar: Distance (218,1273) — tap, type `*0+28` (the field opens with

@@ -518,8 +518,13 @@ or the bare ground starts the sketch there with a head-on camera animation
 face also offers "Sketch" directly (`startSketch` reads the face plane).
 Same-plane sketches are reused as one sketch item (the reference app's rule), and
 re-opening an auto-hidden sketch makes it visible again (`beginSketch`).
-Missing: hover grid-follow, Space-bar entry, body-intersection snap points
-and the associative intersection coincidence, Normal to Sketch button.
+A finger double-tap on the grid, a planar face or a construction plane
+starts a sketch; hover + Space does with a pointer; Sketch shows the three
+rectangles at once. The cube and named views define a plane. Normal to Sketch
+restores the 2D view after orbiting. Which details are inferred rather than
+sourced: STATUS_AND_NEXT_STEPS "Using sketch planes".
+Missing: hover grid-follow, body-intersection snap points
+and the associative intersection coincidence.
 **Feasibility:** [mesh-kernel OK]
 
 ### 2.4 Changing a sketch plane / moving sketches
@@ -1496,13 +1501,13 @@ drags transform, and drags starting over a filled profile begin a pull
 to the `ViewportView.gestureDragBegan` delegate first and falls back to
 orbit only when no tool claims it). Mid-sketch orbit: tapping the ACTIVE
 sketch tool deselects it (`deselectSketchTool`, `tool: nil`), after which
-empty-space drags orbit and "Look at Sketch" restores head-on. That
+empty-space drags orbit and "Normal to Sketch" restores head-on. That
 mirrors the reference app's own
 convention, so the level stands (`TurntableCamera.orbit/pan/zoom`);
 double-tap empty space fits the scene. The Apple Pencil now draws sketch
 strokes (`.pencil` accepted on the one-finger recognizer, with
 pencil-touch tracking for arbitration). Missing: 2-finger twist rotation,
-zoom-to-face on double-tap (double-tap on a body selects it instead —
+zoom-to-face (a finger double-tap starts a sketch, a mouse one selects —
 deliberate choice), presets, scroll/modifier desktop mappings.
 **Feasibility:** [mesh-kernel OK]
 
@@ -1612,7 +1617,7 @@ can invert this — built 2026-10-13, Settings ▸ Interface; §17). Selecting a
 editing that sketch without rotating the camera.
 **Status:** 🟡 partial — tap = planar face selection with orange highlight
 (`selectFaceOrBody` + `FaceTopology`), fallback to whole body on curved
-regions; double-tap = whole body; tap empty = deselect; sketch elements are
+regions; double-click (finger: in Select mode) = whole body; tap empty = deselect; sketch elements are
 tap-selectable while in sketch mode (`selectedSketchEntityIDs`). Missing:
 edge selection, multi-select, highlight-through-occluders,
 jump-into-sketch-on-tap from 3D.

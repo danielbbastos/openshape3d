@@ -100,6 +100,10 @@ final class EditorViewModel {
     /// tap extends the selection.
     @ObservationIgnored
     var tapShiftHeld = false
+    /// The double-tap being handled came from a finger, not a mouse, trackpad
+    /// or Pencil (set by the viewport around one double-tap).
+    @ObservationIgnored
+    var doubleTapFromFinger = false
 
     weak var cameraControl: (any ViewportCameraControl)?
 
@@ -1377,7 +1381,8 @@ final class EditorViewModel {
         var scene = ViewportScene(bodies: drawables)
         scene.facePatches = patches
         scene.decals = decalDrawables(drawn: Set(drawables.map(\.id)))
-        scene.gridPlane = activeSketch?.plane ?? (gridPosition == .zx ? nil : gridPosition.plane)
+        scene.gridPlane = activeSketch?.plane ?? workPlane
+            ?? (gridPosition == .zx ? nil : gridPosition.plane)
         scene.lockedGridSpacing = lockedGridSpacing
         scene.surfaceAnalysis = surfaceAnalysis
 
@@ -4432,11 +4437,74 @@ final class EditorViewModel {
         mode = .pickingMirrorPlane
     }
 
+    /// The Mirror button: with bodies or sketch shapes selected, straight to
+    /// the plane pick; with nothing selected, first ask what to mirror.
+    func beginMirror() {
+        if canMirrorFromModelView {
+            beginMirrorPlanePick()
+        } else {
+            beginMirrorSourcePick()
+        }
+    }
+
+    /// Mirror is waiting for a pick — what to mirror, or the plane.
+    var isMirrorPickActive: Bool {
+        switch mode {
+        case .pickingMirrorSource, .pickingMirrorPlane: return true
+        default: return false
+        }
+    }
+
+    /// Step one of a Mirror started with nothing selected.
+    func beginMirrorSourcePick() {
+        cancelTransientPicks()
+        cancelTool()
+        selection = []
+        mirrorTargets = []
+        mirrorSketchTarget = nil
+        mode = .pickingMirrorSource
+    }
+
+    func cancelMirrorSourcePick() {
+        guard case .pickingMirrorSource = mode else { return }
+        mode = .idle
+    }
+
+    /// Tap routing while Mirror asks what to mirror: the smallest thing
+    /// under the tap. A sketch shape drawn on a body's face lies at the
+    /// face's depth, so it wins any near-tie with the body — otherwise the
+    /// body would always take it. A miss keeps the pick armed.
+    private func handleMirrorSourcePick(ray: Ray) {
+        let bodyHit = HitTester.pickBody(ray: ray, in: scene)
+        let shapeHit = profileHit(ray: ray).flatMap { $0.profile.sourceEntityIDs.isEmpty ? nil : $0 }
+        let shapeWins: Bool = {
+            guard let shapeHit else { return false }
+            guard let bodyHit else { return true }
+            let tolerance = max(Float(0.05), bodyHit.distance * 1e-3)
+            return shapeHit.distance <= bodyHit.distance + tolerance
+        }()
+        if !shapeWins, let bodyHit {
+            mirrorTargets = [bodyHit.bodyID]
+            mirrorSketchTarget = nil
+            selection = [bodyHit.bodyID]
+        } else if let shapeHit {
+            mirrorTargets = []
+            mirrorSketchTarget = (shapeHit.sketchID, shapeHit.profile.sourceEntityIDs)
+            // Highlight the picked shape while the plane is chosen.
+            selectedSketchEntityIDs = shapeHit.profile.sourceEntityIDs
+        } else {
+            return
+        }
+        mode = .pickingMirrorPlane
+    }
+
     /// The status pill while Section View or Mirror waits for its plane.
     var planePickPrompt: (icon: String, text: String)? {
         switch mode {
         case .pickingSectionPlane:
             return ("square.split.diagonal.2x2", "Choose a section plane")
+        case .pickingMirrorSource:
+            return ("rectangle.on.rectangle", "Choose a body or shape to mirror")
         case .pickingMirrorPlane:
             return ("rectangle.on.rectangle", "Choose a face or plane to mirror across")
         default:
@@ -4448,6 +4516,7 @@ final class EditorViewModel {
     func cancelPlanePickPrompt() {
         cancelSectionPlanePick()
         cancelMirrorPlanePick()
+        cancelMirrorSourcePick()
     }
 
     func cancelMirrorPlanePick() {
@@ -4465,7 +4534,8 @@ final class EditorViewModel {
         let tileHit = PlanePicking.pick(ray: ray, tiles: tiles)
         let bodyHit = HitTester.pickBody(ray: ray, in: scene)
         let picked: SketchPlane?
-        if let tileHit, bodyHit == nil || tileHit.distance <= bodyHit!.distance + 1e-3 {
+        // The tiles are drawn over the model here, so they win the tap.
+        if let tileHit {
             picked = tileHit.tile.plane
         } else if let bodyHit {
             picked = worldFacePlane(bodyID: bodyHit.bodyID, triangleIndex: bodyHit.triangleIndex)
@@ -6936,10 +7006,16 @@ final class EditorViewModel {
         // sketch — Front, Right and the oblique home view all did; Top and
         // Bottom on a ground sketch did not, and free rotation never does.
         // Without this the sketch stayed open edge-on, where taps place
-        // nothing. Free orbit keeps the sketch and offers Look at Sketch.
+        // nothing. Free orbit keeps the sketch and offers Normal to Sketch.
         if case .sketching = mode, let plane = activeSketch?.plane,
            !view.isHeadOn(to: plane) {
             finishSketch()
+        }
+        // Outside a sketch a named view also defines the sketch plane (§2.3).
+        if let eye = SketchPlaneNavigation.eyeDirection(of: view) {
+            enterStandardPlaneView(facing: eye)
+        } else {
+            endPlaneView()
         }
         cameraControl?.animateToStandardView(view)
     }
@@ -6977,6 +7053,7 @@ final class EditorViewModel {
     /// View ▸ Nearest Ortho View: square up to the closest of the six views.
     func nearestOrthoView() {
         if case .sketching = mode { finishSketch() }
+        endPlaneView()
         cameraControl?.animateToNearestOrthoView()
     }
 
@@ -7000,7 +7077,50 @@ final class EditorViewModel {
         }
     }
 
-    var gridPosition: GridPosition = .zx
+    var gridPosition: GridPosition = .zx {
+        didSet { workPlane = nil }
+    }
+
+    /// The plane the grid was moved to: by a cube face or named view (both
+    /// define a sketch plane per the help article), or by a mouse double-click
+    /// on a face or plane. Sketch starts on it only while that view is still
+    /// head-on (`planeView`); after orbiting, Sketch shows the three origin
+    /// rectangles and a tap on the grid uses it. That it outlives an orbit is
+    /// our inference, not the article's.
+    private(set) var workPlane: SketchPlane?
+
+    /// A cube face or named view: that origin plane becomes the sketch plane
+    /// and the view flattens. Nothing is cut; the view names a direction.
+    func enterStandardPlaneView(facing eye: SIMD3<Double>) {
+        guard !mode.isSketching else { return }
+        guard let plane = SketchPlaneNavigation.originPlane(facing: eye) else {
+            endPlaneView()
+            return
+        }
+        workPlane = plane
+        // The cube and Views are ways to define the plane Sketch is asking for.
+        if case .pickingSketchPlane(let tool) = mode {
+            beginSketch(on: plane, tool: tool)
+            return
+        }
+        beginPlaneView(plane, cut: false)
+    }
+
+    /// A double-clicked face or construction plane becomes the sketch plane.
+    private func enterPlane(_ plane: SketchPlane) {
+        workPlane = plane
+        beginPlaneView(plane, cut: true)
+        cameraControl?.moveCameraHeadOn(to: plane)
+    }
+
+    /// Views ▸ Reset View & Grid: the home view, with the grid back on the
+    /// ground and no sketch plane defined.
+    func resetViewAndGrid() {
+        if mode.isSketching { finishSketch() }
+        endPlaneView()
+        gridPosition = .zx
+        cameraControl?.animateToStandardView(.isometric)
+    }
 
     /// View ▸ Lock Grid Size: the spacing the grid froze at, nil = follows zoom.
     private(set) var lockedGridSpacing: Double?
@@ -7027,6 +7147,29 @@ final class EditorViewModel {
     /// the camera stood when the sketch opened). nil = nothing is cut.
     private(set) var sketchKeptNormal: SIMD3<Double>?
 
+    /// Orbiting mid-sketch shows the whole model in 3D; Normal to Sketch
+    /// brings the flat view and its cut back.
+    private(set) var sketchFlat = SketchPlaneNavigation.FlatTracker()
+
+    /// The viewport reports the camera's angle off the open sketch's plane.
+    func sketchCameraMoved(offAxisDegrees: Double) {
+        guard let plane = activeSketch?.plane else { return }
+        var next = sketchFlat
+        next.cameraMoved(offAxisDegrees: offAxisDegrees, leaveDegrees: Self.lookAtSketchThresholdDegrees)
+        guard next != sketchFlat else { return }
+        let flatChanged = next.isFlat != sketchFlat.isFlat
+        sketchFlat = next
+        guard flatChanged else { return }
+        // Landing again may be from the other side: cut toward this eye.
+        if next.isFlat, sketchKeptNormal != nil {
+            sketchKeptNormal = Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition)
+        }
+        if let before = orthographicBeforeSketch {
+            let wanted = next.isFlat || before
+            if wanted != orthographicEnabled { setOrthographic(wanted) }
+        }
+    }
+
     /// Called whenever the editor enters, leaves or switches sketches.
     private func sketchViewChanged() {
         // A mirror pick belongs to the sketch it started in.
@@ -7043,8 +7186,9 @@ final class EditorViewModel {
             return
         }
         let settings = AppSettings.shared
-        if settings.flatSketchView, orthographicBeforeSketch == nil {
-            orthographicBeforeSketch = orthographicEnabled
+        sketchFlat = .init()
+        if settings.flatSketchView {
+            if orthographicBeforeSketch == nil { orthographicBeforeSketch = orthographicEnabled }
             if !orthographicEnabled { setOrthographic(true) }
         }
         sketchKeptNormal = settings.sketchHidesFront
@@ -7065,9 +7209,10 @@ final class EditorViewModel {
         var keep: SIMD3<Double>?
         /// The projection to restore.
         var orthographicBefore: Bool
-        /// Set once the camera has come head-on; only then does turning
-        /// away end the view (the flight in starts off-axis).
-        var settled = false
+        /// Unit vector toward the eye once landed. Signed, so a flight from
+        /// Front to Back doesn't count as landed before it has left.
+        var facing: SIMD3<Double>
+        var tracker = SketchPlaneNavigation.FlatTracker()
     }
 
     private(set) var planeView: PlaneView?
@@ -7079,10 +7224,12 @@ final class EditorViewModel {
         guard !mode.isSketching else { return }   // a sketch has its own flat view
         let before = orthographicEnabled
         if !orthographicEnabled { setOrthographic(true) }
+        let keep = cut ? Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition) : nil
         planeView = PlaneView(
             plane: plane,
-            keep: cut ? Self.keptSide(of: plane, eye: cameraControl?.cameraEyePosition) : nil,
-            orthographicBefore: before)
+            keep: keep,
+            orthographicBefore: before,
+            facing: keep.map { -$0 } ?? simd_normalize(plane.normal))
     }
 
     func endPlaneView() {
@@ -7095,16 +7242,15 @@ final class EditorViewModel {
     /// as it moves: head-on settles the view, turning away ends it.
     func planeViewCameraMoved(offAxisDegrees: Double) {
         guard var view = planeView else { return }
-        if offAxisDegrees < 1 {
-            if !view.settled { view.settled = true; planeView = view }
-        } else if view.settled, offAxisDegrees > Self.lookAtSketchThresholdDegrees {
-            endPlaneView()
-        }
+        let tracked = view.tracker
+        view.tracker.cameraMoved(offAxisDegrees: offAxisDegrees, leaveDegrees: Self.lookAtSketchThresholdDegrees)
+        guard view.tracker != tracked else { return }
+        if view.tracker.isFlat { planeView = view } else { endPlaneView() }
     }
 
     /// The cut the scene draws: the open sketch's, else the plane view's.
     private var flatViewCut: (plane: SketchPlane, keep: SIMD3<Double>)? {
-        if let keep = sketchKeptNormal, let plane = activeSketch?.plane { return (plane, keep) }
+        if let keep = sketchKeptNormal, sketchFlat.isFlat, let plane = activeSketch?.plane { return (plane, keep) }
         if let view = planeView, let keep = view.keep { return (view.plane, keep) }
         return nil
     }
@@ -7874,6 +8020,8 @@ final class EditorViewModel {
             handleSectionPlanePick(ray: ray)
         case .pickingMirrorPlane:
             handleMirrorPlanePick(ray: ray)
+        case .pickingMirrorSource:
+            handleMirrorSourcePick(ray: ray)
         case .pickingImagePlane:
             handleImagePlanePick(ray: ray)
         case .pickingBlendEdges(let kind):
@@ -7891,7 +8039,9 @@ final class EditorViewModel {
         }
     }
 
-    /// Shapr3D: double-tap selects the whole body; on empty space, fit view.
+    /// A finger double-tap starts a sketch (help article, "Touch and pen").
+    /// A mouse or Pencil double-tap selects the whole body and looks straight
+    /// at the face; on empty space, it fits the view.
     /// While sketching, double-tap selects the tapped entity's whole
     /// connected chain (spec §1.10, endpoint adjacency).
     private func handleDoubleTap(ray: Ray) {
@@ -7918,13 +8068,18 @@ final class EditorViewModel {
             )
             return
         }
+        // "You can also double-tap on the rectangle."
+        if case .pickingSketchPlane(let tool) = mode {
+            handlePlanePick(ray: ray, tool: tool)
+            return
+        }
+        if startSketchFromFingerDoubleTap(ray: ray) { return }
         let bodyHit = HitTester.pickBody(ray: ray, in: scene)
         // Double-tap a construction plane (in front of any body): look
         // straight at it (spec §7.1, "double-tap a face = zoom to face").
         if let planeHit = PlanePicking.pick(ray: ray, tiles: constructionPlaneTiles),
            bodyHit == nil || planeHit.distance <= bodyHit!.distance + 1e-3 {
-            beginPlaneView(planeHit.tile.plane, cut: true)
-            cameraControl?.moveCameraHeadOn(to: planeHit.tile.plane)
+            enterPlane(planeHit.tile.plane)
             return
         }
         if let hit = bodyHit {
@@ -7938,8 +8093,7 @@ final class EditorViewModel {
             // …and a flat face turns the camera head-on to it, from the side
             // the user is looking at it from. A curved face only selects.
             if let plane = worldFacePlane(bodyID: hit.bodyID, triangleIndex: hit.triangleIndex) {
-                beginPlaneView(plane, cut: true)
-                cameraControl?.moveCameraHeadOn(to: plane)
+                enterPlane(plane)
             }
         } else {
             cameraControl?.fitScene()
@@ -9114,6 +9268,7 @@ final class EditorViewModel {
         if case .aligning = mode { return false }
         if case .pickingSectionPlane = mode { return false }
         if case .pickingMirrorPlane = mode { return false }
+        if case .pickingMirrorSource = mode { return false }
         if case .pickingImagePlane = mode { return false }
         guard HitTester.pickBody(ray: ray, in: scene) == nil,
               let hit = profileHit(ray: ray)
@@ -13127,23 +13282,26 @@ final class EditorViewModel {
     /// The viewport's last reported pointer/Pencil hover, nil once it leaves.
     var hoverRay: Ray?
 
-    /// Space (Shapr3D): start a Line sketch on the plane or face under the
-    /// pointer — the origin tiles, a construction plane, a planar body face
-    /// or the bare grid. Outside a sketch only; nothing hovered, or a hover
-    /// that is not a sketch plane (a curved wall), is a no-op.
+    /// Space (help article, "Keyboard and mouse"): start a sketch on what is
+    /// under the pointer. While the plane rectangles are up that includes
+    /// them, and keeps the chosen tool; otherwise a construction plane,
+    /// planar face or the grid, with Line armed. The pointed-at plane wins
+    /// over a selection or an earlier plane. Nothing hovered, or a curved
+    /// wall, is a no-op.
     func sketchOnHoveredPlane() -> Bool {
-        guard let ray = hoverRay else { return false }
-        switch mode {
-        case .sketching, .pickingSketchPlane: return false
-        default: break
+        guard let ray = hoverRay, !mode.isSketching else { return false }
+        let tool: SketchTool?
+        let picking: Bool
+        if case .pickingSketchPlane(let armed) = mode {
+            tool = armed
+            picking = true
+        } else {
+            tool = .line
+            picking = false
         }
-        startSketch(tool: .line)
-        if case .pickingSketchPlane(let tool) = mode {
-            handlePlanePick(ray: ray, tool: tool)
-        }
-        if mode.isSketching { return true }
-        cancelPlanePicking()
-        return false
+        guard case .plane(let plane) = sketchTarget(under: ray, originTiles: picking) else { return false }
+        sketch(on: plane, tool: tool)
+        return true
     }
 
     /// Pointer/Pencil-hover previews for tap-built sketch tools. An arc's third
@@ -13429,7 +13587,7 @@ final class EditorViewModel {
     /// overlays paint these red.
     var sketchConflictAttribution = SketchSolverBridge.ConflictAttribution()
 
-    func startSketch(tool: SketchTool) {
+    func startSketch(tool: SketchTool?) {
         cancelSymmetryAxisPick()
         clearRectanglePlacement()
         clearSplinePlacement()
@@ -13465,6 +13623,12 @@ final class EditorViewModel {
         }
         cancelTool()
         selection.removeAll()
+        // Looking straight at a plane just defined by a view: sketch on it.
+        // Otherwise the article's flow: choose from the three rectangles.
+        if let plane = planeView?.plane, let defined = workPlane, defined.isCoincident(with: plane) {
+            beginSketch(on: defined, tool: tool)
+            return
+        }
         // No plane yet: show the origin plane tiles. Tapping one — or a
         // planar face, a construction plane, or the bare ground — starts
         // the sketch there.
@@ -13495,31 +13659,76 @@ final class EditorViewModel {
         }
     }
 
-    /// Tap routing while the plane tiles are up.
-    private func handlePlanePick(ray: Ray, tool: SketchTool) {
-        let tiles = worldPlaneTiles + constructionPlaneTiles
+    var isPickingSketchPlane: Bool {
+        if case .pickingSketchPlane = mode { return true }
+        return false
+    }
+
+    /// What lies under a tap or the pointer, as somewhere to sketch.
+    private enum SketchTarget {
+        case plane(SketchPlane)
+        /// A body with no flat face there (a curved wall).
+        case refused
+        case nothing
+    }
+
+    /// An origin rectangle (only while they are shown), a construction plane,
+    /// a planar face, or the grid as it is drawn.
+    private func sketchTarget(under ray: Ray, originTiles: Bool) -> SketchTarget {
+        let tiles = (originTiles ? worldPlaneTiles : []) + constructionPlaneTiles
         let tileHit = PlanePicking.pick(ray: ray, tiles: tiles)
         let bodyHit = HitTester.pickBody(ray: ray, in: scene)
 
-        if let tileHit, bodyHit == nil || tileHit.distance <= bodyHit!.distance + 1e-3 {
-            beginSketch(on: tileHit.tile.plane, tool: tool)
-            return
+        // While the picker shows them, the tiles are drawn over the model
+        // (overlay pass), so a tap on one is that tile even inside a body.
+        if let tileHit, originTiles || bodyHit == nil || tileHit.distance <= bodyHit!.distance + 1e-3 {
+            return .plane(tileHit.tile.plane)
         }
         if let bodyHit {
-            if let plane = worldFacePlane(bodyID: bodyHit.bodyID, triangleIndex: bodyHit.triangleIndex) {
-                beginSketch(on: plane, tool: tool)
-            }
-            // A body was tapped, not the grid: a refused face (curved) keeps
-            // the picker armed rather than sketching on the ground behind it
-            // — the same rule as the Section View picker.
-            return
+            // A body, not the grid: never sketch on the grid behind it.
+            guard let plane = worldFacePlane(bodyID: bodyHit.bodyID, triangleIndex: bodyHit.triangleIndex)
+            else { return .refused }
+            return .plane(plane)
         }
-        // Ground fallback: tapping the bare grid sketches on the ground plane.
-        if ray.intersect(planePoint: .zero, planeNormal: SIMD3(0, 1, 0)) != nil {
-            beginSketch(on: .ground, tool: tool)
-            return
+        let grid = workPlane ?? gridPosition.plane
+        let point = SIMD3<Float>(grid.origin)
+        guard ray.intersect(planePoint: point, planeNormal: SIMD3<Float>(grid.normal)) != nil
+        else { return .nothing }
+        return .plane(grid)
+    }
+
+    /// Tap (or finger double-tap) routing while the plane tiles are up.
+    private func handlePlanePick(ray: Ray, tool: SketchTool?) {
+        switch sketchTarget(under: ray, originTiles: true) {
+        case .plane(let plane): beginSketch(on: plane, tool: tool)
+        case .refused: break // keep the picker armed, as Section View does
+        case .nothing: mode = .idle
         }
-        mode = .idle
+    }
+
+    /// "Using a finger, double-tap on the grid, a planar surface or
+    /// construction plane" starts sketching there, with no tool armed. Only
+    /// where no other tool is waiting for input, and not in Select mode
+    /// (there a double-tap selects the body). False = not handled.
+    private func startSketchFromFingerDoubleTap(ray: Ray) -> Bool {
+        guard doubleTapFromFinger, !selectionAdditive else { return false }
+        switch mode {
+        case .idle, .selected, .faceSelected, .editingPrimitive: break
+        default: return false
+        }
+        guard case .plane(let plane) = sketchTarget(under: ray, originTiles: false) else { return false }
+        sketch(on: plane, tool: nil)
+        return true
+    }
+
+    /// Start a sketch on a plane pointed at directly, whatever was selected.
+    private func sketch(on plane: SketchPlane, tool: SketchTool?) {
+        cancelTransientPicks()
+        cancelTool()
+        selectedImageID = nil
+        selectedPlaneID = nil
+        selection.removeAll()
+        beginSketch(on: plane, tool: tool)
     }
 
     /// A body's tapped planar face as a world-space sketch plane. A CURVED
@@ -13545,7 +13754,7 @@ final class EditorViewModel {
     /// An unselected plane-based entry creates an independent sketch, even on
     /// a coincident plane. Continue an existing sketch through its item/outline
     /// instead; geometric coincidence alone is not document identity.
-    private func beginSketch(on plane: SketchPlane, tool: SketchTool) {
+    private func beginSketch(on plane: SketchPlane, tool: SketchTool?) {
         let sketch = Sketch(name: session.document.uniqueSketchName(), plane: plane)
         session.preview { $0.sketches.append(sketch) }
         provisionalSketch = (sketch.id, session.undoStack.undoCommands.count)

@@ -70,7 +70,7 @@ final class TransformUITests: XCTestCase {
         delete.tap()
 
         // The untouched original is still there: select it and delete it too.
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)).doubleTap()
+        selectBody(app, at: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6)))
         XCTAssertTrue(delete.isEnabled, "Original should still exist and be selectable")
         delete.tap()
         XCTAssertFalse(delete.isEnabled, "Both bodies deleted — nothing left to delete")

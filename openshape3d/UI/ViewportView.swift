@@ -199,6 +199,9 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
            let pose = OrientationCube.hitPose(
                at: point, camera: renderer.camera, viewSize: view.bounds.size
            ) {
+            // A face defines the sketch plane and flattens, like a named view.
+            let eye = pose.position - pose.target
+            viewModel.enterStandardPlaneView(facing: SIMD3(Double(eye.x), Double(eye.y), Double(eye.z)))
             cameraAnimator?.animate(to: pose, duration: 0.4)
             return
         }
@@ -341,7 +344,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             at: point, armed: viewModel.gizmoRepositionArmed, project: project)
     }
 
-    func gestureDoubleTapped(at point: CGPoint) {
+    func gestureDoubleTapped(at point: CGPoint, byFinger: Bool) {
         // A double-tap on the orientation cube snaps to the face, edge or
         // corner under it like a single tap, and flattens the view into a
         // 2D projection along that direction (Shapr3D); orbiting away ends
@@ -352,7 +355,10 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
                at: point, camera: renderer.camera, viewSize: view.bounds.size
            ) {
             let eye = pose.position - pose.target
-            if simd_length(eye) > 1e-6 {
+            let direction = SIMD3(Double(eye.x), Double(eye.y), Double(eye.z))
+            if SketchPlaneNavigation.originPlane(facing: direction) != nil {
+                viewModel.enterStandardPlaneView(facing: direction)
+            } else if simd_length(eye) > 1e-6 {
                 let n = simd_normalize(eye)
                 let plane = SketchPlane.readable(
                     origin: SIMD3(Double(pose.target.x), Double(pose.target.y), Double(pose.target.z)),
@@ -363,6 +369,8 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             return
         }
         guard let ray = ray(at: point) else { return }
+        viewModel.doubleTapFromFinger = byFinger
+        defer { viewModel.doubleTapFromFinger = false }
         viewModel.handle(.doubleTap(ray: ray))
     }
 
@@ -524,6 +532,9 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
         // Choosing a mirror plane: the same.
         if case .pickingMirrorPlane = viewModel.mode {
+            return false
+        }
+        if case .pickingMirrorSource = viewModel.mode {
             return false
         }
 
@@ -966,7 +977,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
     }
 
     /// View ▸ Rotate View: turn the turntable by these angles. Elevation
-    /// stays inside the turntable's ±89° (its fixed Y-up degenerates at 90°).
+    /// stays inside the turntable's ±90°.
     func rotateView(yawDegrees: Double, pitchDegrees: Double) {
         guard let renderer else { return }
         var target = renderer.camera
@@ -1024,11 +1035,23 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         return Double(acos(alignment)) * 180 / .pi
     }
 
-    /// Show Look-at-Sketch while sketching with the camera >10° off head-on.
+    /// Degrees between the eye-line and `direction`, signed by side: 180 from
+    /// straight behind, where `offAngleDegrees(to:)` reads 0.
+    private func offAngleDegrees(facing direction: SIMD3<Double>) -> Double {
+        guard let renderer else { return 0 }
+        let offset = renderer.camera.position - renderer.camera.target
+        guard simd_length(offset) > 1e-6 else { return 0 }
+        let eye = simd_normalize(SIMD3(Double(offset.x), Double(offset.y), Double(offset.z)))
+        return acos(min(max(simd_dot(eye, direction), -1), 1)) * 180 / .pi
+    }
+
+    /// Show Normal to Sketch while sketching with the camera >10° off head-on.
     private func cameraDidMove() {
         let available: Bool
         if let plane = viewModel.activeSketch?.plane {
-            available = offAngleDegrees(to: plane) > EditorViewModel.lookAtSketchThresholdDegrees
+            let off = offAngleDegrees(to: plane)
+            available = off > EditorViewModel.lookAtSketchThresholdDegrees
+            viewModel.sketchCameraMoved(offAxisDegrees: off)
         } else {
             available = false
         }
@@ -1036,7 +1059,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             viewModel.lookAtSketchAvailable = available
         }
         if let planeView = viewModel.planeView {
-            viewModel.planeViewCameraMoved(offAxisDegrees: offAngleDegrees(to: planeView.plane))
+            viewModel.planeViewCameraMoved(offAxisDegrees: offAngleDegrees(facing: planeView.facing))
         }
         // Let SwiftUI overlays that reproject world points (dimension labels,
         // plan §C2) re-run their layout as the camera moves.
@@ -1045,7 +1068,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
     /// Degrees between the camera eye-line and `plane`'s normal — 0 head-on,
     /// 90 edge-on. Used by sketch entry to decide whether the current view is
-    /// usable to draw in, and by the Look at Sketch button's visibility.
+    /// usable to draw in, and by the Normal to Sketch button's visibility.
     func offAxisDegrees(to plane: SketchPlane) -> Double {
         offAngleDegrees(to: plane)
     }

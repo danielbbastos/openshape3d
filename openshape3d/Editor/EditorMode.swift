@@ -56,7 +56,8 @@ enum EditorMode: Equatable {
     /// A sketch tool is armed but no plane is chosen yet: the origin plane
     /// tiles are shown; tapping one (or a face/construction plane/the ground)
     /// starts the sketch there.
-    case pickingSketchPlane(tool: SketchTool)
+    /// `tool` nil: Sketch itself was pressed; the sketch opens with no tool.
+    case pickingSketchPlane(tool: SketchTool?)
     /// Sketching on a plane. `tool: nil` = no drawing tool armed (the active
     /// tool was tapped off): taps select, drags on geometry edit, and
     /// empty-space drags orbit the camera — so the plane can be viewed from
@@ -113,6 +114,9 @@ enum EditorMode: Equatable {
     /// tapping a world/construction plane tile or a planar face of any body
     /// mirrors `EditorViewModel.mirrorTargets` across it.
     case pickingMirrorPlane
+    /// Mirror pressed with nothing selected: the next tap on a body or a
+    /// closed sketch shape is what to mirror; then `pickingMirrorPlane`.
+    case pickingMirrorSource
     /// Insert Image (plan §B10, spec §6.3): picked image bytes are waiting in
     /// `EditorViewModel.pendingImageData`; the plane tiles are shown, and the
     /// tapped plane (ground when the tap misses every tile) hosts the image.

@@ -127,6 +127,80 @@ slanted slivers of every tall wall (reported on a real part). The view
 matrix now takes screen-up from the orbit angles (`TurntableCamera.up`, equal
 to the old Y-up result off the pole) and `elevationLimit` is 90°.
 
+**Mirror with nothing selected** (Shapr3D, user request). The Mirror button
+is live with an empty selection: it asks "Choose a body or shape to mirror"
+(`EditorMode.pickingMirrorSource`), the tap picks the nearest body or closed
+sketch shape, then the usual "Choose a face or plane to mirror across" step
+mirrors it (`beginMirror` / `handleMirrorSourcePick`). With a selection the
+button still opens the Mirror menu. Verified on the iPad simulator: the
+stepped block across its end face → copy at x 10…30; a ground triangle at
+x −30…−16 across the same face → copy at x 36…50 in the same sketch.
+The pick takes the smallest thing under the tap: a sketch shape drawn on a
+body's face sits at the face's depth and wins the near-tie with the body
+(it used to lose, so a rectangle on a face could never be picked), and it is
+outlined while the plane is chosen. Verified: a rectangle on the step's top
+face, mirrored across the front face (z = 5) → copy at z 7…13, same sketch.
+
+**Using sketch planes** (spec §2.3). Checked against screenshots of the help
+article's intro and both "How to start a sketch" tabs, supplied by the user.
+Its second section ("How Shapr3D organizes your sketches") has NOT been seen.
+
+From the article:
+- A plane is defined by selecting a plane / face first, the cube, or Views.
+- Sketch shows the three origin rectangles at once (the flyout beside them
+  picks a tool first); tap or double-tap one. They win the tap over a body,
+  being drawn over it.
+- Finger double-tap on the grid, a planar face or a construction plane starts
+  a sketch there.
+- Pointer: hover + Space starts on what is under the pointer, rectangles
+  included while shown (the chosen tool is kept).
+- Normal to Sketch returns to the 2D normal view after rotating (button id
+  still `LookAtSketch`; UI tests find it by id, never by label).
+
+From the user's description of Shapr3D, not the article:
+- A double-click on a plane / face gives a flat projection with the near side
+  cut away (mouse and Pencil here; a finger gets the same view in the sketch).
+- Double-click on a cube face snaps to it (PARITY_SPEC §7.2 says "reset").
+
+Our inferences, NOT confirmed in Shapr3D. Don't cite these as parity:
+- Cube faces / named views flatten, use the plane through the origin, no cut.
+- Sketch skips the rectangles while still head-on to such a plane.
+- The grid stays on that plane after orbiting (`workPlane`); Reset View &
+  Grid or Grid Position clears it. A picked rectangle doesn't move the grid.
+- Orbiting mid-sketch lifts the cut and the flat projection.
+- A finger selects a whole body via Select mode (double-tap there), since
+  double-tap now sketches.
+- Each entry makes a new sketch, though PARITY_SPEC §2.3 says continuing on
+  the same plane edits the same one.
+
+Fixed 2026-11-23, lost viewport taps (pre-existing): the single-tap
+recognizer required the double-tap recognizer to fail, and a tap that landed
+while it waited was dropped. Quick taps in different places (sketch points
+~0.45 s apart) went missing. SplineUITests.testClosedControlSplineIsAnExtrudableProfile
+failed 2 of 5 on 9e54f0fb that way: a three-point spline's curve passed
+inside the pick tolerance of the centre, so the extrude tap selected the curve.
+Now one tap recognizer feeds `TapSequencer` (Interaction/), which delivers
+every tap and makes two taps within 0.35 s and 44 pt a double-tap at the first
+point. The spline test passed 8 of 8 afterwards; `TapSequencerTests` covers it.
+
+Known same bug, not fixed: Section View, Split and Insert Image also draw
+plane tiles over the model but let the body behind win the tap (Sketch and
+Mirror are fixed).
+
+**UI tests failing on untouched upstream 0bb77eb9** (iPad Air 11" M2, iOS
+26.0.1, Xcode 26.0.1; identical failures with and without this branch):
+Blend ChamferTwoEdgesInOneFeature; Dimension CircleDiameterDimensionDrives,
+CircularAnnotationPreference, FreshAlwaysRadiusReadout, ImperialKeypad
+(three of these can't find SettingsButton); Items PlaneRowSelects;
+ParityWalkthrough 03 and 07; Planes SketchOnFaceThenExtrude; SectionDisplay
+XRay; SelectionExtension ClickAdds; RectangleWorkflow GalleryReopened;
+Settings UnitSwitchRelabels. Full run 2026-11-23 (excluding LiveSend,
+BugReport, WebHandoff, SlicerExport, *Take*, VideoSimSetup): 32 failures,
+all also failing on upstream — Clipboard TutorialMode; ConstraintRail x2;
+Drawing Sheets; FaceFlow x3; ImportPicker; KeyboardShortcuts Recorded;
+Material Steel; Measure x2; SketchEdit EndpointDrag; Settings x7 (most
+can't find SettingsButton) plus those listed above.
+
 **Open:** face-selection mirror (spec §5.6), the
 blue/purple Mirror badges, a "zoom to face" that also fits the face's size
 (today it keeps the current distance, min 14 mm), and a UI test for each
