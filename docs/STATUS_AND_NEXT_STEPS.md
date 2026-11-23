@@ -19,6 +19,14 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-21, view commands with the window hidden
+
+`CameraAnimator` runs on a `CADisplayLink`, which does not fire while the
+app is in the background or its Mac window is covered: `view.top` over MCP
+reported success and left the camera where it was. A fallback lands the
+flight at its end pose if it has not finished `duration + 0.25 s` after it
+started; a counter keeps a late fallback from landing a superseded flight.
+
 ## Mission log — 2026-11-23, quick viewport taps were dropped
 
 The single-tap recognizer required the double-tap recognizer to fail, and a
@@ -31,6 +39,7 @@ recognizer feeds `TapSequencer` (Interaction/), which delivers every tap and
 treats two taps within 0.35 s and 44 pt as a double-tap at the first point.
 A lone tap still waits out that window, as before. `TapSequencerTests`
 covers it; the spline test passed 8 of 8 afterwards.
+
 
 ## Mission log — 2026-11-21, building with Xcode 26.0.1
 
