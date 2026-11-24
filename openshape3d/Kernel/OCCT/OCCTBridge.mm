@@ -4651,4 +4651,154 @@ static bool OS3DPlausibleSectionCounts(NSData *data) {
     return TessellateShape(shape->_shape, linearDeflection, angularDeflection);
 }
 
+
+// MARK: - Measure
+
+/// The piece a Measure call names: the whole shape (0), face (1) or edge (2)
+/// `index` in the shared 1-based indexed-map order. Null when it is missing.
+static TopoDS_Shape OS3DMeasurePiece(const TopoDS_Shape &shape, NSInteger kind, NSInteger index) {
+    if (shape.IsNull()) return TopoDS_Shape();
+    if (kind == 0) return shape;
+    TopTools_IndexedMapOfShape map;
+    TopExp::MapShapes(shape, kind == 1 ? TopAbs_FACE : TopAbs_EDGE, map);
+    if (index < 1 || index > map.Extent()) return TopoDS_Shape();
+    return map((Standard_Integer)index);
+}
+
+static void OS3DPut(double *row, int at, const gp_XYZ &v) {
+    row[at] = v.X(); row[at + 1] = v.Y(); row[at + 2] = v.Z();
+}
+
++ (nullable NSData *)measureGeometryOfShape:(OCCTShape *)shape
+                                       kind:(NSInteger)kind
+                                      index:(NSInteger)index {
+    if (shape == nil) return nil;
+    try {
+        const TopoDS_Shape piece = OS3DMeasurePiece(shape->_shape, kind, index);
+        if (piece.IsNull()) return nil;
+        double row[16] = {0};
+        row[0] = (double)kind;
+        if (kind == 0) {
+            GProp_GProps props;
+            BRepGProp::VolumePropertiesGK(piece, props, 1e-7, Standard_False, Standard_True);
+            row[1] = props.Mass();
+            OS3DPut(row, 2, props.CentreOfMass().XYZ());
+        } else if (kind == 1) {
+            const TopoDS_Face face = TopoDS::Face(piece);
+            BRepAdaptor_Surface surf(face);
+            GProp_GProps props;
+            const bool planar = surf.GetType() == GeomAbs_Plane;
+            if (planar) {
+                BRepGProp::SurfaceProperties(face, props, 1e-7);
+            } else {
+                BRepGProp::SurfaceProperties(face, props);
+            }
+            double area = props.Mass();
+            if (!planar) {
+                const double exact = OS3DSpanExactArea(face);
+                if (exact > 0.0) area = exact;
+            }
+            row[2] = area;
+            OS3DPut(row, 3, props.CentreOfMass().XYZ());
+            switch (surf.GetType()) {
+                case GeomAbs_Plane: {
+                    row[1] = 0;
+                    // Outward, from the face's own parametrisation (see faceInfo).
+                    Standard_Real u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+                    BRepTools::UVBounds(face, u0, u1, v0, v1);
+                    BRepGProp_Face oriented(face);
+                    gp_Pnt at; gp_Vec nv;
+                    oriented.Normal((u0 + u1) / 2, (v0 + v1) / 2, at, nv);
+                    gp_Dir normal = surf.Plane().Axis().Direction();
+                    if (nv.Magnitude() > 1e-12) {
+                        normal = gp_Dir(nv);
+                    } else if (face.Orientation() == TopAbs_REVERSED) {
+                        normal.Reverse();
+                    }
+                    OS3DPut(row, 6, surf.Plane().Location().XYZ());
+                    OS3DPut(row, 9, normal.XYZ());
+                    break;
+                }
+                case GeomAbs_Cylinder: {
+                    const gp_Cylinder c = surf.Cylinder();
+                    row[1] = 1;
+                    OS3DPut(row, 6, c.Location().XYZ());
+                    OS3DPut(row, 9, c.Axis().Direction().XYZ());
+                    row[12] = c.Radius();
+                    break;
+                }
+                case GeomAbs_Cone: {
+                    const gp_Cone c = surf.Cone();
+                    row[1] = 2;
+                    OS3DPut(row, 6, c.Apex().XYZ());
+                    OS3DPut(row, 9, c.Axis().Direction().XYZ());
+                    row[12] = c.SemiAngle();
+                    row[13] = c.RefRadius();
+                    break;
+                }
+                case GeomAbs_Sphere: {
+                    const gp_Sphere c = surf.Sphere();
+                    row[1] = 3;
+                    OS3DPut(row, 6, c.Location().XYZ());
+                    row[12] = c.Radius();
+                    break;
+                }
+                default:
+                    row[1] = 4;
+                    break;
+            }
+        } else {
+            const TopoDS_Edge edge = TopoDS::Edge(piece);
+            if (BRep_Tool::Degenerated(edge)) return nil;
+            BRepAdaptor_Curve curve(edge);
+            const double first = curve.FirstParameter(), last = curve.LastParameter();
+            row[2] = GCPnts_AbscissaPoint::Length(curve, first, last);
+            OS3DPut(row, 3, curve.Value(first).XYZ());
+            OS3DPut(row, 6, curve.Value(last).XYZ());
+            switch (curve.GetType()) {
+                case GeomAbs_Line:
+                    row[1] = 0;
+                    break;
+                case GeomAbs_Circle: {
+                    const gp_Circ c = curve.Circle();
+                    row[1] = 1;
+                    OS3DPut(row, 9, c.Location().XYZ());
+                    OS3DPut(row, 12, c.Axis().Direction().XYZ());
+                    row[15] = c.Radius();
+                    break;
+                }
+                default:
+                    row[1] = 2;
+                    break;
+            }
+        }
+        return [NSData dataWithBytes:row length:sizeof(row)];
+    } catch (...) {
+        return nil;
+    }
+}
+
++ (nullable NSData *)minimumDistanceBetweenShape:(OCCTShape *)a
+                                            kind:(NSInteger)kindA
+                                           index:(NSInteger)indexA
+                                        andShape:(OCCTShape *)b
+                                            kind:(NSInteger)kindB
+                                           index:(NSInteger)indexB {
+    if (a == nil || b == nil) return nil;
+    try {
+        const TopoDS_Shape pa = OS3DMeasurePiece(a->_shape, kindA, indexA);
+        const TopoDS_Shape pb = OS3DMeasurePiece(b->_shape, kindB, indexB);
+        if (pa.IsNull() || pb.IsNull()) return nil;
+        BRepExtrema_DistShapeShape dist(pa, pb);
+        if (!dist.IsDone() || dist.NbSolution() < 1) return nil;
+        double row[7];
+        row[0] = dist.Value();
+        OS3DPut(row, 1, dist.PointOnShape1(1).XYZ());
+        OS3DPut(row, 4, dist.PointOnShape2(1).XYZ());
+        return [NSData dataWithBytes:row length:sizeof(row)];
+    } catch (...) {
+        return nil;
+    }
+}
+
 @end
