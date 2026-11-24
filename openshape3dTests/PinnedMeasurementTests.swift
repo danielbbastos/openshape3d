@@ -65,4 +65,37 @@ final class PinnedMeasurementTests: XCTestCase {
         let old = try XCTUnwrap(ProjectArchive(name: "Old").encoded())
         XCTAssertNil(try XCTUnwrap(ProjectArchive.decode(old)).pinnedMeasurements)
     }
+
+    // MARK: Rows (Object Measurements)
+
+    func testAnAreaRowPinsWithItsReadingAtTheFaceCentre() {
+        let row = MeasureRow(kind: .area, value: 16)
+        let pin = PinnedMeasurement(row: row, anchor: SIMD3(2, 4, 2))
+        XCTAssertEqual(pin.kind, .row)
+        XCTAssertEqual(pin.value, 16)
+        XCTAssertEqual(pin.quantity, .area)
+        XCTAssertEqual(pin.rowTitle, "Area")
+        XCTAssertEqual(pin.labelAnchor, SIMD3(2, 4, 2))
+        XCTAssertTrue(pin.segments.isEmpty)
+    }
+
+    func testAMinimumDistanceRowDrawsItsSpan() {
+        let row = MeasureRow(kind: .minDistance, value: 5, points: [.zero, SIMD3(0, 5, 0)])
+        let pin = PinnedMeasurement(row: row, anchor: nil)
+        XCTAssertEqual(pin.segments, [.zero, SIMD3(0, 5, 0)])
+        XCTAssertEqual(pin.labelAnchor, SIMD3(0, 2.5, 0))
+    }
+
+    func testATwoPointDistanceRowStaysADistancePin() {
+        let row = MeasureRow(kind: .distance, value: 5, points: [.zero, SIMD3(3, 4, 0)])
+        XCTAssertEqual(PinnedMeasurement(row: row, anchor: nil).kind, .distance)
+    }
+
+    /// Documents saved before rows could be pinned have no row fields.
+    func testOlderPinsStillDecode() throws {
+        let json = #"[{"id":"9C1E2B76-8D51-4C47-9E5B-1A3D2F0C4B11","kind":"distance","points":[[0,0,0],[3,4,0]]}]"#
+        let pins = try JSONDecoder().decode([PinnedMeasurement].self, from: Data(json.utf8))
+        XCTAssertEqual(pins.first?.value ?? 0, 5, accuracy: 1e-12)
+        XCTAssertNil(pins.first?.rowKind)
+    }
 }

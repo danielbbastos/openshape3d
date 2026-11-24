@@ -3031,6 +3031,22 @@ static double OS3DSpanExactArea(const TopoDS_Face &face) {
     }
 }
 
++ (NSInteger)nearestFaceIndexOfShape:(OCCTShape *)shape
+                            toPointX:(double)x y:(double)y z:(double)z
+                           tolerance:(double)tolerance {
+    if (shape == nil || shape->_shape.IsNull()) return 0;
+    try {
+        TopTools_IndexedMapOfShape faceMap;
+        TopExp::MapShapes(shape->_shape, TopAbs_FACE, faceMap);
+        if (faceMap.Extent() == 0) return 0;
+        const double pt[3] = {x, y, z};
+        const std::set<Standard_Integer> found = OS3DNearestFaces(faceMap, pt, 1, tolerance);
+        return found.empty() ? 0 : (NSInteger)*found.begin();
+    } catch (...) {
+        return 0;
+    }
+}
+
 + (nullable NSData *)edgeMidpointsOfShape:(OCCTShape *)shape {
     if (shape == nil || shape->_shape.IsNull()) return nil;
     try {

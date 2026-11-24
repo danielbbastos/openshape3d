@@ -543,6 +543,12 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
                             toPointX:(double)x y:(double)y z:(double)z
                            tolerance:(double)tolerance;
 
+/// The 1-based index of the face nearest the point (within `tolerance`), 0
+/// when none — a tapped render triangle's kernel face, for Measure.
++ (NSInteger)nearestFaceIndexOfShape:(OCCTShape *)shape
+                            toPointX:(double)x y:(double)y z:(double)z
+                           tolerance:(double)tolerance;
+
 /// Each edge's point halfway along its curve BY ARC LENGTH, as packed
 /// doubles `x y z` per edge in the shared 1-based indexed-map order (entry
 /// i−1 is edge i). NaN for an edge with no curve (degenerated) or whose

@@ -766,6 +766,16 @@ nonisolated enum OCCTKernel {
         return index > 0 ? Int(index) : nil
     }
 
+    /// The kernel face nearest a point in the shape's own frame — a tapped
+    /// render triangle's face (Measure). Nil when nothing is within tolerance.
+    static func nearestFaceIndex(_ handle: BRepHandle, to point: SIMD3<Double>,
+                                 tolerance: Double) -> Int? {
+        let index = OCCTBridge.nearestFaceIndex(
+            of: handle.shape, toPointX: point.x, y: point.y, z: point.z,
+            tolerance: tolerance)
+        return index > 0 ? Int(index) : nil
+    }
+
     /// Each kernel edge's point halfway along its curve by arc length, keyed
     /// by the shared 1-based edge index. Degenerate edges, and any whose
     /// length the kernel cannot compute, are absent.

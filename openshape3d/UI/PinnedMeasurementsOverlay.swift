@@ -57,6 +57,9 @@ struct PinnedMeasurementsOverlay: View {
         switch pin.kind {
         case .distance: return EditorViewModel.formattedLength(pin.value)
         case .angle: return EditorViewModel.formattedAngle(pin.value)
+        case .row:
+            let value = MeasurePanel.text(value: pin.value, quantity: pin.quantity ?? .length)
+            return pin.rowTitle.map { "\($0) \(value)" } ?? value
         }
     }
 }
