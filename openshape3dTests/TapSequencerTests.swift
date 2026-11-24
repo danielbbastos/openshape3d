@@ -11,8 +11,8 @@ import XCTest
 
 final class TapSequencerTests: XCTestCase {
 
-    private func tap(_ x: CGFloat, _ y: CGFloat, at time: TimeInterval) -> TapSequencer.Tap {
-        TapSequencer.Tap(point: CGPoint(x: x, y: y), time: time, shift: false)
+    private func tap(_ x: CGFloat, _ y: CGFloat, at time: TimeInterval, finger: Bool = true) -> TapSequencer.Tap {
+        TapSequencer.Tap(point: CGPoint(x: x, y: y), time: time, byFinger: finger, shift: false)
     }
 
     func testALoneTapIsSingleOnceTheWindowCloses() {
@@ -49,5 +49,14 @@ final class TapSequencerTests: XCTestCase {
         XCTAssertEqual(taps.tap(tap(100, 100, at: 0.5)), [.single(tap(100, 100, at: 0))])
         XCTAssertEqual(taps.flush(generation: stale), [], "The first timer is stale")
         XCTAssertEqual(taps.flush(generation: taps.generation), [.single(tap(100, 100, at: 0.5))])
+    }
+
+    func testADoubleTapIsByFingerOnlyWhenBothTapsAre() {
+        var taps = TapSequencer()
+        _ = taps.tap(tap(100, 100, at: 0, finger: true))
+        guard case .double(let both)? = taps.tap(tap(100, 100, at: 0.1, finger: false)).first else {
+            return XCTFail("Expected a double-tap")
+        }
+        XCTAssertFalse(both.byFinger)
     }
 }

@@ -19,6 +19,63 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-21…23, sketch view: starting a sketch, flat view while sketching
+
+Checked against the reference documentation on sketch planes (intro and
+both "How to start a sketch" tabs). Its section on organizing sketches has
+NOT been seen.
+
+**Starting a sketch** (spec §2.3), from the article:
+- Sketch shows the three origin rectangles at once (the flyout beside them
+  picks a tool first); tap or double-tap one. They win the tap over a body,
+  being drawn over it (`sketchTarget`).
+- While they are up, the grid follows the rectangle under the pointer
+  (`hoveredSketchTile`; spec "grid auto-follows the hovered plane").
+- A finger double-tap on the grid, a planar face or a construction plane
+  starts a sketch there (`startSketchFromFingerDoubleTap`; off in Select
+  mode, where a double-tap selects the body). A mouse or Pencil double-click
+  still gives the plane view.
+- Pointer: hover + Space starts on what is under the pointer, rectangles
+  included while shown (the chosen tool is kept).
+- A cube face or named view chosen while the rectangles are up starts the
+  sketch on that plane.
+- Normal to Sketch (was "Look at Sketch") returns to the 2D normal view after
+  rotating; the button id is still `LookAtSketch`, and UI tests find it by id.
+
+Inferred, NOT confirmed against the reference: Sketch skips the rectangles while still
+head-on to a plane a view just defined; the grid fallback is that plane.
+
+**Flat view while sketching** (Settings ▸ Sketch View, both default ON):
+*Flat View While Sketching* switches to orthographic while a sketch is open
+and restores the previous projection when it closes; *Hide Model in Front of
+Sketch* clips the model on the camera's side of the sketch plane (the plane
+view's cut). Driven by `mode`'s `didSet` (`sketchViewChanged`), so every way
+in and out of a sketch is covered. Orbiting more than 10° off mid-sketch
+lifts the cut and the flat projection; Normal to Sketch brings them back,
+cutting toward wherever the camera now is (`sketchFlat`, our inference).
+
+**Same-plane sketches are NOT reused.** PARITY_SPEC §2.3 says continuing on
+the same plane right after edits the same sketch, but upstream chose
+otherwise on purpose (`beginSketch`: "geometric coincidence alone is not
+document identity", pinned by
+`SketchIdentityTests.testNewCoplanarEntryKeepsSeparateOwnershipAndUndo`).
+Left as is until the article's second section settles it.
+
+**Tests.** UI tests now select bodies with `selectBody` (Select mode), since
+a finger double-tap sketches. Known same tile-vs-body bug, not fixed: Section
+View, Split and Insert Image draw plane tiles over the model but let the
+body behind win the tap.
+
+**UI tests failing on untouched upstream 0bb77eb9** (iPad Air 11" M2, iOS
+26.0.1, Xcode 26.0.1), full run 2026-11-23 excluding LiveSend, BugReport,
+WebHandoff, SlicerExport, *Take*, VideoSimSetup: 32 failures — Blend
+ChamferTwoEdgesInOneFeature; Clipboard TutorialMode; ConstraintRail ×2;
+Dimension ×4 (several can't find SettingsButton); Drawing Sheets; FaceFlow
+×3; ImportPicker; Items PlaneRowSelects; KeyboardShortcuts Recorded;
+Material Steel; Measure ×2; ParityWalkthrough 03 and 07; Planes
+SketchOnFaceThenExtrude; SectionDisplay XRay; SelectionExtension ClickAdds;
+RectangleWorkflow GalleryReopened; SketchEdit EndpointDrag; Settings ×7.
+
 ## Mission log — 2026-11-21…23, plane view: the cube, named views, a double-clicked face
 
 The reference documentation on sketch planes lists the cube and Views as ways
@@ -115,14 +172,6 @@ across the front face (z = 5) → copy at z 7…13, same sketch.
 **Open:** face-selection mirror (spec §5.6), the blue/purple Mirror badges,
 a UI test for each flow.
 
-## Mission log — 2026-11-21, view commands with the window hidden
-
-`CameraAnimator` runs on a `CADisplayLink`, which does not fire while the
-app is in the background or its Mac window is covered: `view.top` over MCP
-reported success and left the camera where it was. A fallback lands the
-flight at its end pose if it has not finished `duration + 0.25 s` after it
-started; a counter keeps a late fallback from landing a superseded flight.
-
 ## Mission log — 2026-11-23, quick viewport taps were dropped
 
 The single-tap recognizer required the double-tap recognizer to fail, and a
@@ -136,6 +185,13 @@ treats two taps within 0.35 s and 44 pt as a double-tap at the first point.
 A lone tap still waits out that window, as before. `TapSequencerTests`
 covers it; the spline test passed 8 of 8 afterwards.
 
+## Mission log — 2026-11-21, view commands with the window hidden
+
+`CameraAnimator` runs on a `CADisplayLink`, which does not fire while the
+app is in the background or its Mac window is covered: `view.top` over MCP
+reported success and left the camera where it was. A fallback lands the
+flight at its end pose if it has not finished `duration + 0.25 s` after it
+started; a counter keeps a late fallback from landing a superseded flight.
 
 ## Mission log — 2026-11-21, building with Xcode 26.0.1
 

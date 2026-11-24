@@ -85,6 +85,9 @@ struct ToolPaletteView: View {
         .overlay(alignment: paletteOnRight ? .topTrailing : .topLeading) { flyoutOverlay }
         // A context flip (enter/leave sketch) closes any open flyout.
         .onChange(of: viewModel.mode.isSketching) { _, _ in expandedGroupID = nil }
+        .onChange(of: viewModel.isPickingSketchPlane) { _, picking in
+            if !picking, expandedGroupID == "Sketch" { expandedGroupID = nil }
+        }
     }
 
     private func paletteColumn(spacing: CGFloat, verticalPadding: CGFloat) -> some View {
@@ -380,6 +383,14 @@ struct ToolPaletteView: View {
         return Button {
             withAnimation(.snappy(duration: 0.18)) {
                 expandedGroupID = expanded ? nil : group.id
+            }
+            // "Select Sketch": the three rectangles appear at once (or the
+            // sketch opens on the selected plane); the flyout beside them
+            // picks a tool first instead. Any other group drops that pick.
+            if group.id == "Sketch", !expanded {
+                viewModel.startSketch(tool: nil)
+            } else {
+                viewModel.cancelPlanePicking()
             }
         } label: {
             paletteIcon(group.icon, label: group.label)

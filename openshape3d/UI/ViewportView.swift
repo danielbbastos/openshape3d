@@ -344,7 +344,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             at: point, armed: viewModel.gizmoRepositionArmed, project: project)
     }
 
-    func gestureDoubleTapped(at point: CGPoint) {
+    func gestureDoubleTapped(at point: CGPoint, byFinger: Bool) {
         // Double-tapping the orientation cube resets to the default view
         // (spec §7.2), like Views ▸ Isometric; a single tap snaps to the face,
         // edge or corner under it.
@@ -354,6 +354,8 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             return
         }
         guard let ray = ray(at: point) else { return }
+        viewModel.doubleTapFromFinger = byFinger
+        defer { viewModel.doubleTapFromFinger = false }
         viewModel.handle(.doubleTap(ray: ray))
     }
 
@@ -839,7 +841,8 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         var hoverRay: Ray?
         if let point { hoverRay = ray(at: point) }
         viewModel.hoverRay = hoverRay
-        if viewModel.updateLinePreview(ray: hoverRay) {
+        let gridMoved = viewModel.updateHoveredSketchTile(ray: hoverRay)
+        if viewModel.updateLinePreview(ray: hoverRay) || gridMoved {
             sceneDidChange()
         }
     }
@@ -1043,11 +1046,13 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         return acos(min(max(simd_dot(eye, direction), -1), 1)) * 180 / .pi
     }
 
-    /// Show Look-at-Sketch while sketching with the camera >10° off head-on.
+    /// Show Normal to Sketch while sketching with the camera >10° off head-on.
     private func cameraDidMove() {
         let available: Bool
         if let plane = viewModel.activeSketch?.plane {
-            available = offAngleDegrees(to: plane) > EditorViewModel.lookAtSketchThresholdDegrees
+            let off = offAngleDegrees(to: plane)
+            available = off > EditorViewModel.lookAtSketchThresholdDegrees
+            viewModel.sketchCameraMoved(offAxisDegrees: off)
         } else {
             available = false
         }
@@ -1064,7 +1069,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
     /// Degrees between the camera eye-line and `plane`'s normal — 0 head-on,
     /// 90 edge-on. Used by sketch entry to decide whether the current view is
-    /// usable to draw in, and by the Look at Sketch button's visibility.
+    /// usable to draw in, and by the Normal to Sketch button's visibility.
     func offAxisDegrees(to plane: SketchPlane) -> Double {
         offAngleDegrees(to: plane)
     }

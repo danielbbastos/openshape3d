@@ -20,7 +20,8 @@ protocol ViewportGestureDelegate: AnyObject {
     func gestureTapped(at point: CGPoint)
     /// A tap with Shift held or not (Selection Extension, spec §8.1).
     func gestureTapped(at point: CGPoint, shift: Bool)
-    func gestureDoubleTapped(at point: CGPoint)
+    /// `byFinger`: not a mouse, trackpad or Pencil.
+    func gestureDoubleTapped(at point: CGPoint, byFinger: Bool)
     /// Offered the one-finger drag at `.began`. Return true to claim it
     /// (gizmo drag, sketch stroke); false lets the camera orbit. `isPencil`
     /// distinguishes an Apple Pencil stroke from a finger so sketch mode can
@@ -51,6 +52,9 @@ final class ViewportGestureController: NSObject {
     private weak var orbitRecognizer: UIPanGestureRecognizer?
     /// Set in shouldReceive: the one-finger drag is being driven by the Pencil.
     private var orbitTouchIsPencil = false
+    private weak var tapRecognizer: UITapGestureRecognizer?
+    /// Set in shouldReceive: the tap is being made with a finger.
+    private var tapIsFinger = false
     /// Sorts taps into single and double without dropping any.
     private var taps = TapSequencer()
     /// Where the one-finger touch actually LANDED, captured in shouldReceive
@@ -86,6 +90,8 @@ final class ViewportGestureController: NSObject {
         // single taps. A single tap that required a double-tap recognizer to
         // fail dropped the next tap if it landed during that wait.
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        tap.delegate = self
+        tapRecognizer = tap
         view.addGestureRecognizer(tap)
 
         // Long-press = Select Through (spec §8.3). A held-still touch fires
@@ -349,7 +355,7 @@ final class ViewportGestureController: NSObject {
         // or the Mac; a bare finger tap never carries it.
         let tap = TapSequencer.Tap(
             point: gesture.location(in: view), time: CACurrentMediaTime(),
-            shift: gesture.modifierFlags.contains(.shift))
+            byFinger: tapIsFinger, shift: gesture.modifierFlags.contains(.shift))
         deliver(taps.tap(tap))
         guard taps.pending != nil else { return }
         // Not a double-tap once the window closes: deliver it as a single tap.
@@ -366,7 +372,7 @@ final class ViewportGestureController: NSObject {
             case .single(let tap):
                 delegate?.gestureTapped(at: tap.point, shift: tap.shift)
             case .double(let tap):
-                delegate?.gestureDoubleTapped(at: tap.point)
+                delegate?.gestureDoubleTapped(at: tap.point, byFinger: tap.byFinger)
             }
         }
     }
@@ -407,6 +413,13 @@ extension ViewportGestureController: UIGestureRecognizerDelegate {
         if gestureRecognizer === orbitRecognizer {
             orbitTouchIsPencil = touch.type == .pencil
             if let view { orbitTouchDown = touch.location(in: view) }
+        }
+        if gestureRecognizer === tapRecognizer {
+            #if targetEnvironment(macCatalyst)
+            tapIsFinger = false // the Mac reports mouse clicks as direct touches
+            #else
+            tapIsFinger = touch.type == .direct
+            #endif
         }
         return true
     }

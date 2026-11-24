@@ -132,7 +132,7 @@ final class ShellUITests: XCTestCase {
         func p(_ dx: CGFloat, _ dy: CGFloat) -> XCUICoordinate {
             window.coordinate(withNormalizedOffset: CGVector(dx: dx, dy: dy))
         }
-        p(0.5, 0.5).doubleTap()   // double-tap the body selects it
+        selectBody(app, at: p(0.5, 0.5))
         sleep(1)
         tapPaletteTool(app, group: "Modify", id: "ShellButton")
         let apply = app.buttons["ShellApply"]

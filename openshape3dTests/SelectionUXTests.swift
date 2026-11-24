@@ -437,6 +437,44 @@ final class SelectionUXTests: XCTestCase {
         XCTAssertFalse(vm.sketchOnHoveredPlane())
         XCTAssertEqual(vm.mode, .idle)
         XCTAssertTrue(vm.session.document.sketches.isEmpty)
+
+        // The hovered plane beats one a named view defined earlier.
+        vm.applyStandardView(.front)
+        vm.hoverRay = Ray(origin: SIMD3(0.5, Float(box.max.y) + 10, 0.5), direction: SIMD3(0, -1, 0))
+        XCTAssertTrue(vm.sketchOnHoveredPlane())
+        XCTAssertEqual(vm.activeSketch?.plane.origin.y ?? -1, Double(box.max.y), accuracy: 1e-3)
+        vm.finishSketch()
+
+        // Tool first, then hover + Space: that tool, on the hovered plane.
+        vm.resetViewAndGrid()
+        vm.startSketch(tool: .circle)
+        XCTAssertTrue(vm.isPickingSketchPlane)
+        vm.hoverRay = Ray(origin: SIMD3(50, 10, 50), direction: SIMD3(0, -1, 0))
+        XCTAssertTrue(vm.sketchOnHoveredPlane())
+        XCTAssertEqual(vm.mode.sketchTool, .circle)
+        XCTAssertEqual(vm.activeSketch?.plane, .ground)
+        vm.finishSketch()
+    }
+
+    /// While the three rectangles are up, the grid follows the one under
+    /// the pointer (spec §2.3); it goes back when the picker closes.
+    func testGridFollowsTheHoveredRectangle() throws {
+        let vm = try makeViewModel()
+        vm.startSketch(tool: .line)
+        XCTAssertTrue(vm.isPickingSketchPlane)
+        // Straight at the XY rectangle (local 0.3…2.3 on X and Y).
+        XCTAssertTrue(vm.updateHoveredSketchTile(ray: Ray(origin: SIMD3(1, 1, 10), direction: SIMD3(0, 0, -1))))
+        XCTAssertEqual(vm.scene.gridPlane, .worldXY)
+        XCTAssertFalse(vm.updateHoveredSketchTile(ray: Ray(origin: SIMD3(1.2, 1, 10), direction: SIMD3(0, 0, -1))),
+                       "Still the same rectangle")
+        // Off every rectangle: back to the plain grid.
+        XCTAssertTrue(vm.updateHoveredSketchTile(ray: Ray(origin: SIMD3(40, 40, 10), direction: SIMD3(0, 0, -1))))
+        XCTAssertNil(vm.scene.gridPlane)
+        // Outside the picker the pointer moves nothing.
+        _ = vm.updateHoveredSketchTile(ray: Ray(origin: SIMD3(1, 1, 10), direction: SIMD3(0, 0, -1)))
+        vm.cancelPlanePicking()
+        XCTAssertNil(vm.hoveredSketchTile)
+        XCTAssertFalse(vm.updateHoveredSketchTile(ray: Ray(origin: SIMD3(1, 1, 10), direction: SIMD3(0, 0, -1))))
     }
 
     // MARK: - Sketch plane picker: face / curved face / miss (QA-01)

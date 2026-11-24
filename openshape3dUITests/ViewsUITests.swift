@@ -33,17 +33,14 @@ final class ViewsUITests: XCTestCase {
         // Let the camera flight settle; the app must remain interactive.
         sleep(1)
 
-        // Draw a rectangle: arm Rect, pick the ground plane, drag.
+        // Draw a rectangle: arm Rect, drag. The Front view defined the sketch
+        // plane (XY, spec §2.3), so there is no plane to pick.
         XCTAssertTrue(app.buttons["SketchGroup"].waitForExistence(timeout: 5))
         startSketchTool(app, "Rect")
 
-        // From the front view the XY plane tile sits head-on just up-right of
-        // the screen center (tiles span 0.3–2.3 world units from the origin).
-        XCTAssertTrue(app.staticTexts["Choose a sketch plane"].waitForExistence(timeout: 3))
-        window.coordinate(withNormalizedOffset: CGVector(dx: 0.62, dy: 0.40)).tap()
-
         XCTAssertTrue(app.staticTexts["Sketching on plane"].waitForExistence(timeout: 3),
-                      "Sketch mode should start after the Front view snap")
+                      "Sketch mode should start on the Front view's plane")
+        XCTAssertFalse(app.staticTexts["Choose a sketch plane"].exists)
         lookAtSketch(app)
 
         // Let the head-on camera animation settle.

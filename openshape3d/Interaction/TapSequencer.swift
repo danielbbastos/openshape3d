@@ -18,6 +18,7 @@ nonisolated struct TapSequencer {
     struct Tap: Equatable {
         var point: CGPoint
         var time: TimeInterval
+        var byFinger: Bool
         var shift: Bool
     }
 
@@ -43,7 +44,9 @@ nonisolated struct TapSequencer {
             if tap.time - first.time <= interval,
                hypot(tap.point.x - first.point.x, tap.point.y - first.point.y) <= slop {
                 pending = nil
-                return [.double(first)]
+                var both = first
+                both.byFinger = first.byFinger && tap.byFinger
+                return [.double(both)]
             }
             pending = tap
             generation += 1

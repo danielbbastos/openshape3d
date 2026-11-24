@@ -1730,7 +1730,7 @@ struct EditorView: View {
                             sketchStateChip(viewModel)
                             // Shown when the camera drifted >10° off head-on.
                             if viewModel.lookAtSketchAvailable {
-                                Button("Look at Sketch") {
+                                Button("Normal to Sketch") {
                                     viewModel.lookAtSketch()
                                 }
                                 .controlSize(.small)
