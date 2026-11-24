@@ -17482,6 +17482,8 @@ final class EditorViewModel {
         measurePoints.removeAll()
         measureItems.removeAll()
         highlightedMeasureRow = nil
+        measureHintBodyID = nil
+        measureHintFaceCenter = nil
     }
 
     /// The 3-Point Angle reading in degrees, once three points are picked.
@@ -17573,7 +17575,12 @@ final class EditorViewModel {
             handleObjectMeasureTap(ray: ray)
             return
         }
-        guard let point = nearestNotablePoint(to: ray) else { return }
+        guard let point = nearestNotablePoint(to: ray) else {
+            // Touch has no hover: a tap on a body shows its notable points.
+            measureHintBodyID = HitTester.pickBody(ray: ray, in: scene)?.bodyID
+            measureHintFaceCenter = faceCenter(under: ray)
+            return
+        }
         if measurePoints.count >= measureType.pointCount {
             measurePoints.removeAll() // next tap restarts the measurement
         }
@@ -17686,8 +17693,84 @@ final class EditorViewModel {
         return points
     }
 
+    /// Notable points per body (world space), rebuilt when the body's mesh
+    /// or placement changes.
+    @ObservationIgnored
+    private var notablePointCache: [BodyID: (revision: UInt64, transform: Transform3D, points: [SIMD3<Double>])] = [:]
+
+    private func notablePoints(of body: Body) -> [SIMD3<Double>] {
+        if let hit = notablePointCache[body.id], hit.revision == body.meshRevision, hit.transform == body.transform {
+            return hit.points
+        }
+        let points = MeasureNotablePoints.points(of: body)
+        notablePointCache[body.id] = (body.meshRevision, body.transform, points)
+        return points
+    }
+
+    /// The centre of the face under the ray — a notable point of its own
+    /// (spec §2.7: hovering a face offers its notable points).
+    private func faceCenter(under ray: Ray) -> SIMD3<Double>? {
+        guard let hit = HitTester.pickBody(ray: ray, in: scene),
+              let body = session.document.body(with: hit.bodyID) else { return nil }
+        // Hover asks on every pointer move: one kernel lookup per face, keyed
+        // by the face region's first triangle.
+        let region = FaceTopology.planarFace(in: body.render, seedTriangle: hit.triangleIndex)?.triangles
+            ?? FaceTopology.smoothRegion(in: body.render, seedTriangle: hit.triangleIndex)?.triangles
+            ?? [hit.triangleIndex]
+        let key = FaceCenterKey(body: body.id, revision: body.meshRevision,
+                                transform: body.transform, triangle: region.min() ?? hit.triangleIndex)
+        if let cached = faceCenterCache[key] { return cached }
+        guard let item = measureFaceItem(body: body, hit: hit),
+              case .surface(_, _, let centroid) = item.geometry else { return nil }
+        if faceCenterCache.count > 256 { faceCenterCache.removeAll() }
+        faceCenterCache[key] = centroid
+        return centroid
+    }
+
+    private struct FaceCenterKey: Hashable {
+        var body: BodyID
+        var revision: UInt64
+        var translation: SIMD3<Double>
+        var rotation: SIMD4<Double>
+        var scale: Double
+        var triangle: Int
+        init(body: BodyID, revision: UInt64, transform: Transform3D, triangle: Int) {
+            self.body = body
+            self.revision = revision
+            translation = transform.translation
+            rotation = transform.rotation.vector
+            scale = transform.scale
+            self.triangle = triangle
+        }
+    }
+
+    @ObservationIgnored
+    private var faceCenterCache: [FaceCenterKey: SIMD3<Double>] = [:]
+
+    /// The body whose notable points are drawn as hints: the one under the
+    /// pointer, or the one last tapped without landing on a point (touch).
+    private(set) var measureHintBodyID: BodyID?
+    private(set) var measureHintFaceCenter: SIMD3<Double>?
+
+    /// The pointer moved while measuring points. True when the hints changed.
+    func updateMeasureHover(ray: Ray?) -> Bool {
+        guard case .measuring = mode, measureType != .object else {
+            let had = measureHintBodyID != nil
+            measureHintBodyID = nil
+            measureHintFaceCenter = nil
+            return had
+        }
+        let body = ray.flatMap { HitTester.pickBody(ray: $0, in: scene)?.bodyID }
+        let center = ray.flatMap(faceCenter(under:))
+        guard body != measureHintBodyID || center != measureHintFaceCenter else { return false }
+        measureHintBodyID = body
+        measureHintFaceCenter = center
+        return true
+    }
+
     /// Nearest notable point to the pick ray within a screen-ish tolerance:
-    /// sketch snap points (SnapEngine) plus body vertices (render positions).
+    /// sketch snap points (SnapEngine), every body's corners, edge middles
+    /// and circle centres, and the centre of the face under the ray.
     private func nearestNotablePoint(to ray: Ray) -> SIMD3<Double>? {
         let tolerance = max(0.5, 30 * worldPerPoint)
         var best: (point: SIMD3<Double>, distance: Double)?
@@ -17706,11 +17789,45 @@ final class EditorViewModel {
             }
         }
         for body in session.document.bodies where !body.isHidden {
-            for position in body.render.positions {
-                consider(body.transform.applying(to: SIMD3<Double>(position)))
-            }
+            notablePoints(of: body).forEach(consider)
         }
+        if let center = faceCenter(under: ray) { consider(center) }
         return best?.point
+    }
+
+    // MARK: Moving a placed point
+
+    @ObservationIgnored
+    private var measureDragIndex: Int?
+
+    /// A drag that starts on a placed point takes it. False otherwise, so
+    /// the drag orbits as usual.
+    func beginMeasurePointDrag(ray: Ray) -> Bool {
+        guard case .measuring = mode, measureType != .object, !measurePoints.isEmpty else { return false }
+        let tolerance = max(0.5, 30 * worldPerPoint)
+        var best: (index: Int, distance: Double)?
+        for (i, p) in measurePoints.enumerated() {
+            let pf = SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z))
+            let t = simd_dot(pf - ray.origin, ray.direction)
+            guard t > 0 else { continue }
+            let d = Double(simd_length(pf - ray.point(at: t)))
+            if d <= tolerance, best == nil || d < best!.distance { best = (i, d) }
+        }
+        guard let best else { return false }
+        measureDragIndex = best.index
+        return true
+    }
+
+    /// The dragged point snaps to the notable point under the finger.
+    func moveMeasurePointDrag(ray: Ray) -> Bool {
+        guard let index = measureDragIndex, index < measurePoints.count,
+              let point = nearestNotablePoint(to: ray), point != measurePoints[index] else { return false }
+        measurePoints[index] = point
+        return true
+    }
+
+    func endMeasurePointDrag() {
+        measureDragIndex = nil
     }
 
     /// Scene overlay for Measure: the picked items, and the spans of the
@@ -17732,7 +17849,24 @@ final class EditorViewModel {
             }
         }
         if !lines.isEmpty { scene.sketchLines.append(SketchLineBatch(segments: lines, color: accent)) }
-        guard measureType == .object else { return }
+        guard measureType == .object else {
+            // Notable-point hints: small crosses on the body under the pointer.
+            var hints: [SIMD3<Double>] = []
+            if let id = measureHintBodyID, let body = session.document.body(with: id) {
+                hints = notablePoints(of: body)
+            }
+            if let center = measureHintFaceCenter { hints.append(center) }
+            guard !hints.isEmpty else { return }
+            let r = Float(max(0.06, 4 * worldPerPoint))
+            var crosses: [SIMD3<Float>] = []
+            for p in hints {
+                let c = f(p)
+                crosses += [c - SIMD3(r, 0, 0), c + SIMD3(r, 0, 0), c - SIMD3(0, r, 0), c + SIMD3(0, r, 0),
+                            c - SIMD3(0, 0, r), c + SIMD3(0, 0, r)]
+            }
+            scene.sketchLines.append(SketchLineBatch(segments: crosses, color: SIMD4(0.45, 0.58, 0.80, 0.9)))
+            return
+        }
         var spans: [SIMD3<Float>] = []
         var bright: [SIMD3<Float>] = []
         for row in measureRows where row.points.count == 2 {

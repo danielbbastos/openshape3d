@@ -410,6 +410,9 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         return Double(dx * ux + dy * uy) * worldPerPoint
     }
 
+    /// A Measure point is being dragged to another notable point.
+    private var measurePointDragActive = false
+
     func gestureDragBegan(at point: CGPoint, isPencil: Bool) -> Bool {
         dragStartPoint = point
         pullActive = false
@@ -453,6 +456,13 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
                 viewModel.setGizmoPivot(world: world)
                 sceneDidChange()
             }
+            return true
+        }
+
+        // Measure: a drag that starts on a placed point moves it to another
+        // notable point (spec §16.3: placed points are movable).
+        if viewModel.beginMeasurePointDrag(ray: ray) {
+            measurePointDragActive = true
             return true
         }
 
@@ -650,6 +660,10 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
     func gestureDragChanged(at point: CGPoint) {
         if numericEditorBlockedCubeDrag { return }
+        if measurePointDragActive {
+            if let ray = ray(at: point), viewModel.moveMeasurePointDrag(ray: ray) { sceneDidChange() }
+            return
+        }
         if pivotDragActive {
             if pivotDragOnSurface {
                 if let ray = ray(at: point), let world = gizmoPlacement(at: point, ray: ray) {
@@ -753,6 +767,12 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             numericEditorBlockedCubeDrag = false
             return
         }
+        if measurePointDragActive {
+            measurePointDragActive = false
+            viewModel.endMeasurePointDrag()
+            sceneDidChange()
+            return
+        }
         if pivotDragActive {
             pivotDragActive = false
             sceneDidChange()
@@ -842,7 +862,8 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         if let point { hoverRay = ray(at: point) }
         viewModel.hoverRay = hoverRay
         let gridMoved = viewModel.updateHoveredSketchTile(ray: hoverRay)
-        if viewModel.updateLinePreview(ray: hoverRay) || gridMoved {
+        let measureHintsMoved = viewModel.updateMeasureHover(ray: hoverRay)
+        if viewModel.updateLinePreview(ray: hoverRay) || gridMoved || measureHintsMoved {
             sceneDidChange()
         }
     }
