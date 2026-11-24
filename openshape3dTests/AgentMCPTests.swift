@@ -229,6 +229,12 @@ final class AgentMCPTests: XCTestCase {
         XCTAssertTrue((((result?["content"] as? [[String: Any]])?.first?["text"] as? String) ?? "").contains("model"))
     }
 
+    func testMeasureIsAReadOpOfTheOneTool() {
+        let tool = call(AgentMCP.plan(for: rpc("tools/call", params: [
+            "name": "os3d", "arguments": ["op": "measure", "args": ["items": [["point": [0, 0, 0]], ["point": [3, 4, 0]]]]]])))
+        XCTAssertEqual(tool?.route, .measure(items: [.point(.zero), .point(SIMD3(3, 4, 0))], deltas: false))
+    }
+
     func testScreenshotsOverMCPAreBudgetedJPEGs() {
         let tool = call(AgentMCP.plan(for: rpc("tools/call", params: ["name": "os3d_screenshot", "arguments": ["width": 4096]])))
         XCTAssertEqual(tool?.route, .screenshot(width: 2048, height: 1024, format: .jpeg, maxBytes: AgentMCP.screenshotBudgetBytes))

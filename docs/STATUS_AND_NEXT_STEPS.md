@@ -19,6 +19,38 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-24, Measure: all of spec §16.3
+
+Measure rebuilt to the whole of spec §16.3 (now ✅):
+
+- **Panel** (`UI/MeasurePanel.swift`) replaces the status pill: draggable
+  (position kept), Measure menu, Include X, Y, Z Deltas
+  (`AppSettings.measureDeltas`, off), Pin to Always Show / Pinned. Opens on
+  **Object Measurements**; the point UI tests pick their type first.
+- **Engine** (`Kernel/MeasureQuery.swift`, `MeasureItems.swift`): picks →
+  world-space `MeasureItem`s → rows. Exact via two new bridge calls,
+  `measureGeometry` (face / edge kind, area, length, centre of gravity) and
+  `minimumDistance` (`BRepExtrema_DistShapeShape`), plus
+  `nearestFaceIndex` (tap → kernel face). The B-rep is moved to world space
+  first; `MeasureQueryTests.testAMovedBodyKeepsItsFaceNumbering` pins that a
+  transform keeps the kernel numbering.
+- **Notable points** (`Kernel/MeasureNotablePoints.swift`): kernel corners,
+  edge middles, circle centres (cached per body revision and placement),
+  face centre under the pointer; drawn as hints; placed points drag.
+- **Pins**: any row (`PinnedMeasurement.kind == .row`, optional fields, old
+  documents decode). An app older than this reads a document with a row
+  pin as having no pins (the array fails to decode as a whole).
+- **Info bar** uses the same rows (memoised per selection, since a minimum
+  distance is a kernel call). Two selected bodies add Minimum / Central
+  distance after Selected / Bounds (`SelectionUXTests` updated).
+- **Agent**: command `view.measure`; MCP op `measure` → `POST /v1/measure`
+  (`AgentMeasureItem`), documented in the model-openshape3d skill.
+
+**Known, not from this work:** `MeasureUITests.testFaceSelectionShowsAreaInInfoBar`
+and `testSeededBoxReportsExactGeometryValues` fail on this Mac's iPad
+(A16) iOS 26.0 simulator on `chore/xcode-26.0-build` too (main + build
+fixes): the idle face tap at (0.5, 0.35) selects no face there.
+
 ## Mission log — 2026-11-21…23, sketch view: starting a sketch, flat view while sketching
 
 Checked against the reference documentation on sketch planes (intro and

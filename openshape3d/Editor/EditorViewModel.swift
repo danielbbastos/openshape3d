@@ -17925,16 +17925,26 @@ final class EditorViewModel {
             )
             // Profile loop is already in world scale (built with scale applied).
             let perimeter = MeasureKit.perimeter(of: context.profile.loop)
+            let round = infoRows(key: "face-\(id.raw)-\(body.meshRevision)-\(context.faceTriangles.min() ?? -1)",
+                                 only: [.radius, .diameter]) {
+                [self.selectedFaceMeasureItem(body: body, triangles: context.faceTriangles)]
+            }
             return [
                 MeasurementRow(label: "Area", value: Self.formattedArea(area)),
                 MeasurementRow(label: "Perimeter", value: Self.formattedLength(perimeter)),
-            ]
+            ] + round
         case .selected(let id), .editingPrimitive(let id):
             if selection.count > 1 {
                 // Multi-selection (plan §B13): count + combined world bounds.
                 let bodies = selection.compactMap { session.document.body(with: $0) }
                 guard let box = MeasureKit.boundingBox(bodies: bodies) else { return [] }
                 let size = box.max - box.min
+                // Two bodies: how far apart they are (spec §16.3).
+                let apart = bodies.count == 2
+                    ? infoRows(key: "bodies-" + bodies.map { "\($0.id.raw)-\($0.meshRevision)-\($0.transform.translation)-\($0.transform.rotation.vector)-\($0.transform.scale)" }
+                                .joined(separator: "|"),
+                               only: [.minDistance, .centralDistance]) { bodies.map { MeasureItem.body($0) } }
+                    : []
                 return [
                     MeasurementRow(label: "Selected", value: "\(bodies.count) bodies"),
                     MeasurementRow(
@@ -17948,7 +17958,7 @@ final class EditorViewModel {
                                 u.display(fromMM: Double(size.z)), u.symbol)
                         }()
                     ),
-                ]
+                ] + apart
             }
             guard let body = session.document.body(with: id),
                   let box = MeasureKit.boundingBox(bodies: [body])
@@ -17979,10 +17989,15 @@ final class EditorViewModel {
                 label: entities.count == 1 ? "Length" : "Total Length",
                 value: Self.formattedLength(total)
             )]
-            if entities.count == 1, let radius = MeasureKit.radius(of: entities[0]) {
-                rows.append(MeasurementRow(
-                    label: "Radius", value: Self.formattedLength(radius)
-                ))
+            if let sketch = activeSketch {
+                // An arc's radius and central angle; two entities' angle and
+                // minimum distance (sketch geometry is cheap: no cache).
+                let items = entities.map { MeasureItem.sketchEntity($0, sketchID: sketch.id, plane: sketch.plane) }
+                let kinds: Set<MeasureRow.Kind> = entities.count == 1
+                    ? [.radius, .diameter, .angle] : [.angle, .minDistance]
+                rows += MeasureQuery.rows(for: items.count <= 2 ? items : [], deltas: false)
+                    .filter { kinds.contains($0.kind) && !($0.kind == .minDistance && $0.value < 1e-9) }
+                    .map { MeasurementRow(label: $0.title, value: Self.formattedReading($0.value, quantity: $0.quantity)) }
             }
             // Two parallel lines: Shapr3D adds the distance between them
             // (observed 2026-09-13: "2 edges  279,925.293 mm  22,558.0444 mm").
@@ -18029,6 +18044,44 @@ final class EditorViewModel {
 
     static func formatted(_ value: Double, unit: String) -> String {
         String(format: "%.2f %@", value, unit)
+    }
+
+    static func formattedReading(_ value: Double, quantity: MeasureRow.Quantity) -> String {
+        switch quantity {
+        case .length: return formattedLength(value)
+        case .angle: return formattedAngle(value)
+        case .area: return formattedArea(value)
+        case .volume: return formattedVolume(value)
+        }
+    }
+
+    /// The info bar asks on every SwiftUI pass; a minimum distance can cost
+    /// a kernel call, so a reading is kept until `key` (what is selected,
+    /// at which mesh revision and place) changes.
+    @ObservationIgnored
+    private var infoRowCache: (key: String, rows: [MeasurementRow])?
+
+    private func infoRows(key: String, only kinds: Set<MeasureRow.Kind>,
+                          items: () -> [MeasureItem]) -> [MeasurementRow] {
+        if let cached = infoRowCache, cached.key == key { return cached.rows }
+        let rows = MeasureQuery.rows(for: items(), deltas: false)
+            .filter { kinds.contains($0.kind) }
+            .map { MeasurementRow(label: $0.title, value: Self.formattedReading($0.value, quantity: $0.quantity)) }
+        infoRowCache = (key, rows)
+        return rows
+    }
+
+    /// The selected face as a Measure item, matched to its kernel face by
+    /// a point on its first triangle.
+    private func selectedFaceMeasureItem(body: Body, triangles: [Int]) -> MeasureItem {
+        var kernelIndex: Int?
+        if let brep = body.brep, let first = triangles.first, first * 3 + 2 < body.render.indices.count {
+            let mesh = body.render
+            let corners = (0..<3).map { SIMD3<Double>(mesh.positions[Int(mesh.indices[first * 3 + $0])]) }
+            let centre = (corners[0] + corners[1] + corners[2]) / 3
+            kernelIndex = OCCTKernel.nearestFaceIndex(brep, to: centre, tolerance: 1)
+        }
+        return MeasureItem.face(of: body, kernelIndex: kernelIndex, triangles: triangles)
     }
 
     // Unit-aware readouts (spec §17): the document stays mm; only display

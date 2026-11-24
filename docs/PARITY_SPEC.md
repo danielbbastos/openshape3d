@@ -608,8 +608,10 @@ center points. Used for measurement, constraints, alignment; visibility via
 Snap To settings.
 **Status:** 🟡 partial — endpoints, line midpoints, rect corners, arc
 endpoints, circle/ellipse/arc centers, and polygon vertices in sketch space
-(`SnapEngine.snapPoints`); Measure's point-to-point mode also offers body
-vertices. Missing: intersection points, face/edge-derived points as general
+(`SnapEngine.snapPoints`); Measure's point modes also offer body
+corners, edge middles, circle and arc centres from the kernel edges, and the
+centre of the face under the pointer (`MeasureNotablePoints`, 2026-11-24).
+Missing: intersection points, face/edge-derived points as general (sketch)
 snap targets.
 **Feasibility:** [mesh-kernel OK]
 
@@ -2468,21 +2470,31 @@ points; placed points movable), 3-Point Angle; optional X/Y/Z deltas; Pin to
 Always Show keeps measurements as in-model annotations (appearance toggle);
 hover a panel row to highlight the referenced geometry. Shift-click two faces
 for a quick face-to-face distance.
-**Status:** 🟡 partial — a selection info bar shows without any mode
-(`SelectionInfoBar` + `MeasureKit`): face area, body volume
-(signed-tetrahedron sum) + bounding box, sketch-entity length and
-radius/diameter; and a palette Measure mode measures point-to-point
-distance with X/Y/Z deltas over notable points (sketch snap points + body
-vertices, cross markers + span line rendered in the overlay). **3-Point
-Angle and Pin (2026-10-12):** the pill's type menu switches to 3-Point Angle
-(first arm, corner, second arm → degrees, both arms drawn); **Pin** keeps the
-current reading in the model as a labelled annotation
-(`PinnedMeasurement`, undoable, saved in the project and the .os3d archive),
-View ▸ Show Pinned Measurements hides them, and in Measure mode each label's
-✕ unpins it (`PinnedMeasurementTests`, `MeasureUITests`). Missing: the
-movable panel, Object Measurements as a type (the info bar covers it),
-min-distance/central-distance, row-hover highlighting, and pins following
-geometry that moves.
+**Status:** ✅ (2026-11-24, `feat/measure-parity`) — Measure is a floating,
+draggable **panel** (`MeasurePanel`): the Measure menu (**Object
+Measurements**, the default; **Point-to-Point**; **3-Point Angle**),
+**Include X, Y, Z Deltas**, **Pin to Always Show** (every reading with a
+Pin) and **Pinned** (with Delete). Object Measurements taps bodies' faces
+and edges and sketch shapes (a double-tap takes the whole body) and reads
+`MeasureQuery`'s rows: length / area / volume summed, radius and diameter
+(arc, circle, cylinder, cone, sphere), an arc's central angle, angle and
+perpendicular angle, minimum distance, central distance (a body's centre
+of gravity), parallel distance (concentric items: radial difference) and
+X/Y/Z. Exact from OCCT (`OCCTBridge.measureGeometry` / `minimumDistance`,
+`BRepExtrema_DistShapeShape`) on analytic bodies; exact point / segment /
+triangle distances for meshes and sketches. Notable points come from the
+kernel edges (corners, edge middles, circle and arc centres) plus the face
+centre under the pointer, shown as hints on hover (tap on touch); a placed
+point can be dragged to another. Hovering or tapping a panel row highlights
+its span. Any row pins (`PinnedMeasurement.kind == .row`). The selection
+info bar reads the same rows (a round face's radius, two bodies' minimum
+and central distance, sketch arcs and pairs). Command `view.measure`; MCP
+`measure` / `POST /v1/measure`. Tests: `MeasureQueryTests`,
+`MeasureNotablePointsTests`, `PinnedMeasurementTests`, `MeasureUITests`.
+Not yet: Shift-click two faces for a quick distance outside the mode, pins
+following geometry that moves (a pin keeps its reading), a phone-specific
+bottom-sheet layout (the card is the same on every size), and per-face
+highlight of the items a row refers to (the row's span is what lights up).
 **Feasibility:** [mesh-kernel OK]
 
 ### 16.4 Display Modes

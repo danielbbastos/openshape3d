@@ -175,11 +175,6 @@ struct MeasurePanel: View {
     }
 
     static func text(value: Double, quantity: MeasureRow.Quantity) -> String {
-        switch quantity {
-        case .length: return EditorViewModel.formattedLength(value)
-        case .angle: return EditorViewModel.formattedAngle(value)
-        case .area: return EditorViewModel.formattedArea(value)
-        case .volume: return EditorViewModel.formattedVolume(value)
-        }
+        EditorViewModel.formattedReading(value, quantity: quantity)
     }
 }

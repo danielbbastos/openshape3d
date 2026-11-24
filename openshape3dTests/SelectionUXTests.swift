@@ -154,12 +154,18 @@ final class SelectionUXTests: XCTestCase {
         viewModel.toggleSelection(of: b.id)
 
         let rows = viewModel.selectionMeasurements
-        XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.count, 4)
         XCTAssertEqual(rows[0].label, "Selected")
         XCTAssertEqual(rows[0].value, "2 bodies")
         XCTAssertEqual(rows[1].label, "Bounds")
         // Combined AABB: x -1…11, y 0…2, z -1…1.
         XCTAssertEqual(rows[1].value, "12.00 × 2.00 × 2.00 mm")
+        // Two bodies also read how far apart they are: 2 mm cubes
+        // 10 mm apart centre to centre leave an 8 mm gap.
+        XCTAssertEqual(rows[2].label, "Minimum distance")
+        XCTAssertEqual(rows[2].value, "8.00 mm")
+        XCTAssertEqual(rows[3].label, "Central distance")
+        XCTAssertEqual(rows[3].value, "10.00 mm")
     }
 
     // MARK: - Select Through

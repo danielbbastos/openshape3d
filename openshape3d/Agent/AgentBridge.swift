@@ -117,6 +117,9 @@ final class AgentBridge {
         case let .faces(bodyID):
             return listFaces(bodyID: bodyID, on: viewModel)
 
+        case let .measure(items, deltas):
+            return measure(items, deltas: deltas, on: viewModel)
+
         case .sketches:
             return listSketches(on: viewModel)
 
@@ -1108,6 +1111,56 @@ final class AgentBridge {
                     "dimensionCount": sketch.dimensions.count]
         }
         return .ok(["sketches": sketches, "count": sketches.count])
+    }
+
+    /// `/v1/measure`: the Measure panel's readings, computed the same way.
+    private func measure(_ requested: [AgentMeasureItem], deltas: Bool,
+                         on viewModel: EditorViewModel) -> AgentResponse {
+        let document = viewModel.session.document
+        func bad(_ message: String) -> AgentResponse {
+            .failure(400, "Bad Request", error: "bad_measure_items", message: message)
+        }
+        var items: [MeasureItem] = []
+        for (i, entry) in requested.enumerated() {
+            switch entry {
+            case .point(let p):
+                items.append(.point(p))
+            case .body(let id):
+                guard let body = document.body(with: BodyID(raw: id)) else { return bad("items[\(i)]: no body \(id)") }
+                items.append(.body(body))
+            case .face(let id, let index), .edge(let id, let index):
+                guard let body = document.body(with: BodyID(raw: id)) else { return bad("items[\(i)]: no body \(id)") }
+                guard body.brep != nil else {
+                    return bad("items[\(i)]: “\(body.name)” is a mesh with no kernel faces or edges; measure the whole body.")
+                }
+                let world = MeasureItem.worldBRep(of: body)
+                if case .face = entry {
+                    let item = MeasureItem.face(of: body, kernelIndex: index, triangles: [], world: world)
+                    guard item.kernel != nil else { return bad("items[\(i)]: “\(body.name)” has no face \(index) — /v1/faces lists them.") }
+                    items.append(item)
+                } else {
+                    let item = MeasureItem.edge(of: body, kernelIndex: index, polyline: [], world: world)
+                    guard item.kernel != nil else { return bad("items[\(i)]: “\(body.name)” has no edge \(index) — /v1/edges lists them.") }
+                    items.append(item)
+                }
+            case let .sketchEntity(sketchID, entityID):
+                guard let sketch = document.sketches.first(where: { $0.id.raw == sketchID }),
+                      let entity = sketch.entities.first(where: { $0.id == entityID })
+                else { return bad("items[\(i)]: no entity \(entityID) in sketch \(sketchID) — /v1/sketches lists them.") }
+                items.append(MeasureItem.sketchEntity(entity, sketchID: sketch.id, plane: sketch.plane))
+            }
+        }
+        let rows = MeasureQuery.rows(for: items, deltas: deltas).map { row -> [String: Any] in
+            [
+                "kind": row.kind.rawValue,
+                "title": row.title,
+                "value": row.value,
+                "unit": ["length": "mm", "angle": "deg", "area": "mm2", "volume": "mm3"][row.quantity.rawValue] ?? "",
+                "text": EditorViewModel.formattedReading(row.value, quantity: row.quantity),
+                "points": row.points.map { [$0.x, $0.y, $0.z] },
+            ]
+        }
+        return .ok(["items": requested.count, "rows": rows])
     }
 
     private func listFaces(bodyID: String, on viewModel: EditorViewModel) -> AgentResponse {
