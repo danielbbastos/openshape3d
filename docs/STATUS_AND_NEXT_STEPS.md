@@ -19,6 +19,51 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-25, undo stalls on a large model
+
+Report: face → Sketch → a line → Undo took seconds, with a busy cursor.
+Undo itself is ~10 ms; `sample` on the simulator with a 204k-triangle mesh
+in the document showed the main thread in two other places:
+
+- **Autosave** (2 s after every change) re-encoded every body's mesh and
+  B-rep (`MeshBlob.encode`, `OCCTKernel.serialize`): ~800 ms in Debug for
+  a sketch line. `DocumentSession.savedGeometry` now remembers what each
+  row last received this session; a body whose mesh, B-rep and primitive
+  match (`SavedGeometry.matches`: array storage identity, so free when
+  unchanged) only rewrites its cheap columns. Reset on load. → ~9 ms.
+- **`RenderMesh.localAABB`** walked every vertex each call — per scene
+  build (`ViewportScene.worldBounds`, 50–100 ms each, several per change),
+  per tap (`HitTester`) and per frame (ground shadows). Now memoised in an
+  `AABBMemo` box replaced whenever `positions` is set; copies share it,
+  `==` ignores it.
+
+- **The error-badge replay after undo/redo** (`refreshEvalErrors`) was the
+  big one on a real model: 6.8 s on the Mac (Debug) for one undo. It ran the
+  whole graph against a COPY of the memo, and the memo is empty after
+  opening a document until the first live rebuild, so every undo re-ran
+  every feature through OCCT, even for a sketch line no feature reads.
+  `FeatureGraph.evalInputsKey` fingerprints what a replay reads (every node,
+  the rollback marker, the sketches and planes the nodes reference, as the
+  memo sees them); `lastEvalErrorsKey` remembers the key the badges were
+  computed for (rebuild, load refresh, undo refresh), and an unchanged key
+  skips the replay. The load-time refresh also keeps its result when an
+  edit landed meanwhile but the key still matches. `EvalInputsKeyTests`.
+- **The first feature edit after opening** replayed the whole history too,
+  because the memo started empty. The open-time badge replay already builds
+  a full memo in the background; it is now adopted (`adoptLoadEvalResult`)
+  when no live rebuild warmed the memo first, the inputs key still matches,
+  and every replayed body matches the stored one (triangle count, vertex
+  count, bounds within 1e-3 mm; `replayMatchesDocument`) — a document
+  whose stored meshes differ still gets today's full first rebuild, which
+  repairs them. Its scratch revisions start at 2^62
+  (`scratchRevisionBase`) so a memo snapshot never shares a revision with a
+  real body. Simulator, 16-feature part (12 OCCT unions), reopened: first
+  new feature 2.4 s → 0.03 s.
+
+`SaveAndBoundsCacheTests` pins the first two. Not done: `save()` still runs on the
+main actor and encodes all sketches; the first save after opening a
+document still encodes every body once.
+
 ## Mission log — 2026-11-25, Euclid 0.10.7 instead of the vendored copy
 
 Euclid is a package again (`XCRemoteSwiftPackageReference`, **exactly

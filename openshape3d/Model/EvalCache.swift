@@ -124,6 +124,40 @@ nonisolated struct EvalFingerprint {
     }
 }
 
+extension FeatureGraph {
+    /// One fingerprint of everything a replay's ERRORS depend on: every node
+    /// (kind, suppression, outputs), the rollback marker, and the sketches
+    /// and construction planes the nodes read, as the memo sees them. Equal
+    /// keys mean a replay would report the same errors, so the error badges
+    /// need no replay. Nil when a node or input will not encode: the caller
+    /// then replays, as before.
+    func evalInputsKey(sketches: [Sketch], planes: [ConstructionPlane]) -> UInt64? {
+        var f = EvalFingerprint()
+        f.combine(UInt64(bitPattern: Int64(rollbackIndex ?? -1)))
+        var sketchIDs = Set<SketchID>()
+        var planeIDs = Set<ConstructionPlaneID>()
+        for node in nodes {
+            guard let data = EvalFingerprint.json(node) else { return nil }
+            f.combine(data)
+            sketchIDs.formUnion(node.referencedSketchIDs)
+            planeIDs.formUnion(node.referencedConstructionPlaneIDs)
+        }
+        let readSketches = sketches.filter { sketchIDs.contains($0.id) }
+            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        for sketch in readSketches {
+            guard let data = EvalFingerprint.json(sketch.evalMemoKey) else { return nil }
+            f.combine(data)
+        }
+        let readPlanes = planes.filter { planeIDs.contains($0.id) }
+            .sorted { $0.id.raw.uuidString < $1.id.raw.uuidString }
+        for plane in readPlanes {
+            guard let data = EvalFingerprint.json(plane) else { return nil }
+            f.combine(data)
+        }
+        return f.value
+    }
+}
+
 extension Sketch {
     /// The sketch as the memo sees it: only what evaluation reads. Its name,
     /// its Items Manager visibility and its presentation-only annotations
