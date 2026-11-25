@@ -17717,7 +17717,7 @@ final class EditorViewModel {
         guard quickFaceMeasure.count == 2 else { return }
         func f(_ p: SIMD3<Double>) -> SIMD3<Float> { SIMD3(Float(p.x), Float(p.y), Float(p.z)) }
         scene.profileFills.append(SketchFillBatch(triangles: quickFaceMeasure[1].triangles.map(f),
-                                                  color: SIMD4(0.0, 0.52, 1.0, 0.28)))
+                                                  color: SIMD4(0.0, 0.52, 1.0, 0.45)))
         if let span = quickFaceSpan, span.count == 2 {
             scene.sketchLines.append(SketchLineBatch(segments: span.map(f), color: SIMD4(1, 0.55, 0, 1)))
         }
@@ -17732,6 +17732,27 @@ final class EditorViewModel {
         session.perform(UnpinMeasurementCommand(
             measurement: session.document.pinnedMeasurements[index], index: index))
         session.save()
+    }
+
+    /// What Object Measurements has picked, e.g. "2 faces" or "1 face, 1
+    /// edge" — so a reading is never about something other than meant.
+    var measurePickSummary: String? {
+        guard measureType == .object, !measureItems.isEmpty else { return nil }
+        var counts: [(String, Int)] = [("body", 0), ("face", 0), ("edge", 0), ("sketch shape", 0), ("point", 0)]
+        for item in measureItems {
+            let i: Int
+            switch item.ref {
+            case .body: i = 0
+            case .face: i = 1
+            case .edge: i = 2
+            case .sketchEntity: i = 3
+            case .point: i = 4
+            }
+            counts[i].1 += 1
+        }
+        return counts.filter { $0.1 > 0 }.map { name, n in
+            n == 1 ? "1 \(name)" : "\(n) \(name == "body" ? "bodies" : name + "s")"
+        }.joined(separator: ", ")
     }
 
     /// What the panel asks for while it has no reading.
@@ -17846,8 +17867,10 @@ final class EditorViewModel {
         guard let nearest = edges.min(by: {
             Self.pointSegmentDistance(local, $0.start, $0.end) < Self.pointSegmentDistance(local, $1.start, $1.end)
         }) else { return nil }
-        // 12 pt on screen, in the body's own units.
-        let reach = Float(12 * worldPerPoint / max(body.transform.scale, 1e-9))
+        // 6 pt on screen, in the body's own units: on a thin part most of a
+        // narrow face lies within a finger's width of an edge, and a wider
+        // reach picked the edge when the face was meant.
+        let reach = Float(6 * worldPerPoint / max(body.transform.scale, 1e-9))
         guard Self.pointSegmentDistance(local, nearest.start, nearest.end) <= reach else { return nil }
         let chain = EdgeTopology.smoothChain(containing: nearest, in: edges)
         let polyline = Self.orderedPolyline(chain).map { body.transform.applying(to: SIMD3<Double>($0)) }
@@ -18065,7 +18088,7 @@ final class EditorViewModel {
             case .surface, .solid:
                 scene.profileFills.append(SketchFillBatch(
                     triangles: item.triangles.map(f),
-                    color: lit ? SIMD4(1, 0.55, 0, 0.35) : SIMD4(0.0, 0.52, 1.0, 0.28)))
+                    color: lit ? SIMD4(1, 0.55, 0, 0.5) : SIMD4(0.0, 0.52, 1.0, 0.45)))
             case .point:
                 break
             }

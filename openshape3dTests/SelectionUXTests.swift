@@ -572,6 +572,7 @@ final class SelectionUXTests: XCTestCase {
         viewModel.handle(.tap(ray: downAt(10)))
         let gap = try XCTUnwrap(viewModel.measureRows.first { $0.kind == .minDistance })
         XCTAssertEqual(gap.value, 8, accuracy: 1e-6)
+        XCTAssertEqual(viewModel.measurePickSummary, "2 faces", "the panel says what is picked")
         viewModel.pinMeasurement(gap)
         let pin = try XCTUnwrap(viewModel.session.document.pinnedMeasurements.first)
         XCTAssertEqual(pin.sources?.count, 2, "the pin knows both faces")

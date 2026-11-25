@@ -41,9 +41,11 @@ struct PinnedMeasurementsOverlay: View {
                     }
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7))
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.blue, lineWidth: 1))
-                    .foregroundStyle(Color.blue)
+                    // Dark text on a solid label with the measure-blue rim:
+                    // blue on a translucent material read blue-on-blue.
+                    .background(Color(uiColor: .systemBackground), in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.blue, lineWidth: 1.5))
+                    .foregroundStyle(.primary)
                     .position(anchor)
                     .allowsHitTesting(measuring)
                     .accessibilityElement(children: .contain)

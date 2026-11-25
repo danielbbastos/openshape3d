@@ -138,6 +138,47 @@ final class MeasureQueryTests: XCTestCase {
 
     // MARK: Pairs
 
+    /// The picked face with its render triangles, as the viewport builds it:
+    /// every triangle whose corners lie on the plane `n·p = d`.
+    private func faceWithTriangles(_ body: Body, normal: SIMD3<Double>, offset: Double) throws -> MeasureItem {
+        let mesh = body.render
+        let triangles = (0..<mesh.triangleCount).filter { t in
+            (0..<3).allSatisfy { k in
+                abs(simd_dot(SIMD3<Double>(mesh.positions[Int(mesh.indices[t * 3 + k])]), normal) - offset) < 1e-4
+            }
+        }
+        XCTAssertFalse(triangles.isEmpty)
+        return MeasureItem.face(of: body, kernelIndex: try faceIndex(body, normal: normal), triangles: triangles)
+    }
+
+    /// Two parallel faces: every straight-across span is shortest, and the
+    /// one drawn goes through the middle of their overlap — not a far corner,
+    /// where it looked like the widest gap.
+    func testTheGapBetweenParallelFacesIsDrawnThroughTheirMiddle() throws {
+        let lower = try box(10, 20, 30)
+        let upper = try box(10, 20, 30, at: SIMD3(0, 0, 50))
+        let rows = MeasureQuery.rows(for: [try faceWithTriangles(lower, normal: SIMD3(0, 0, 1), offset: 30),
+                                           try faceWithTriangles(upper, normal: SIMD3(0, 0, -1), offset: -50)],
+                                     deltas: false)
+        let gap = try XCTUnwrap(row(.minDistance, in: rows))
+        XCTAssertEqual(gap.value, 20, accuracy: 1e-6)
+        XCTAssertEqual(gap.points.count, 2)
+        XCTAssertLessThan(simd_length(gap.points[0] - SIMD3(5, 10, 30)), 1e-3, "\(gap.points)")
+        XCTAssertLessThan(simd_length(gap.points[1] - SIMD3(5, 10, 50)), 1e-3, "\(gap.points)")
+    }
+
+    func testTheGapBetweenParallelEdgesIsDrawnWhereTheyOverlap() {
+        let a = MeasureItem.sketchEntity(.line(id: UUID(), a: SIMD2(0, 0), b: SIMD2(10, 0)),
+                                         sketchID: SketchID(), plane: .ground)
+        let b = MeasureItem.sketchEntity(.line(id: UUID(), a: SIMD2(4, 5), b: SIMD2(20, 5)),
+                                         sketchID: SketchID(), plane: .ground)
+        let gap = row(.minDistance, in: MeasureQuery.rows(for: [a, b], deltas: false))
+        XCTAssertEqual(gap?.value ?? 0, 5, accuracy: 1e-9)
+        // Overlap is x 4…10 along the first line; the span sits at x = 7.
+        XCTAssertEqual(gap?.points.first?.x ?? 0, 7, accuracy: 1e-9)
+        XCTAssertEqual(gap?.points.last?.x ?? 0, 7, accuracy: 1e-9)
+    }
+
     func testOppositeFacesAreParallelAtTheBoxHeight() throws {
         let part = try box(10, 20, 30)
         let rows = MeasureQuery.rows(for: [try face(part, normal: SIMD3(0, 0, 1)),

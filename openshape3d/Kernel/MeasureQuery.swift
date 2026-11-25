@@ -267,7 +267,7 @@ nonisolated enum MeasureQuery {
             }
         }
 
-        let span = minimumSpan(a, b)
+        let span = minimumSpan(a, b).map { centered($0, a, b) }
         if let span {
             rows.append(MeasureRow(kind: .minDistance, value: span.distance, points: [span.a, span.b]))
         }
@@ -479,6 +479,48 @@ nonisolated enum MeasureQuery {
     }
 
     // MARK: Minimum distance
+
+    /// Between two parallel faces or edges that overlap, every straight-
+    /// across span is a shortest one, and the kernel hands back whichever it
+    /// met first — often at a far corner, where it reads like the WIDEST
+    /// gap. Draw the span through the middle of the overlap instead. Same
+    /// length; only where it is drawn changes.
+    static func centered(_ span: Span, _ a: MeasureItem, _ b: MeasureItem) -> Span {
+        let tolerance = max(1e-6, span.distance * 1e-6)
+        switch (a.geometry, b.geometry) {
+        case let (.curve(.line(p1, q1), _, _), .curve(.line(p2, q2), _, _)):
+            let d = q1 - p1
+            let ll = simd_dot(d, d)
+            guard ll > 0, let db = direction(of: b), 1 - abs(simd_dot(simd_normalize(d), db)) < parallelTolerance
+            else { return span }
+            // Overlap of B's ends along A, as A's parameter.
+            let t2 = simd_dot(p2 - p1, d) / ll, t3 = simd_dot(q2 - p1, d) / ll
+            let lo = max(0, min(t2, t3)), hi = min(1, max(t2, t3))
+            guard lo <= hi else { return span }
+            let onA = p1 + d * ((lo + hi) / 2)
+            let onB = closestOnSegment(onA, p2, q2)
+            let length = simd_length(onB - onA)
+            return abs(length - span.distance) <= tolerance ? Span(distance: span.distance, a: onA, b: onB) : span
+        case (.surface(.plane, _, let ca), .surface(.plane(let ob, let nb), _, let cb)):
+            guard !a.triangles.isEmpty, !b.triangles.isEmpty, let da = direction(of: a),
+                  1 - abs(simd_dot(da, simd_normalize(nb))) < parallelTolerance else { return span }
+            let n = simd_normalize(nb)
+            // Try the middle between the two faces first, then each centre.
+            for seed in [(ca + cb) / 2, ca, cb] {
+                guard let onA = MeasureItem.closestOnTriangles(seed, a.triangles) else { continue }
+                let onB = onA - simd_dot(onA - ob, n) * n
+                guard let check = MeasureItem.closestOnTriangles(onB, b.triangles),
+                      simd_length(check - onB) <= max(1e-4, tolerance) else { continue }
+                let length = simd_length(onB - onA)
+                if abs(length - span.distance) <= max(1e-4, tolerance) {
+                    return Span(distance: span.distance, a: onA, b: onB)
+                }
+            }
+            return span
+        default:
+            return span
+        }
+    }
 
     /// The shortest span between two items: exact from the kernel when both
     /// came from a B-rep, otherwise from their points, segments and

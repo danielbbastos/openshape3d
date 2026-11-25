@@ -57,7 +57,7 @@ struct MeasurePanel: View {
     private func sheet(height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Capsule()
-                .fill(.tertiary)
+                .fill(Color.secondary.opacity(0.6))
                 .frame(width: 36, height: 5)
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
@@ -86,8 +86,9 @@ struct MeasurePanel: View {
             }
         }
         .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
-        .shadow(color: .black.opacity(0.15), radius: 10, y: -2)
+        .background(Self.fill, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Self.border, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: -2)
         .gesture(DragGesture(minimumDistance: 12).onEnded { value in
             // Swipe down to collapse, up to expand.
             if value.translation.height > 30 { withAnimation(.snappy) { collapsed = true } }
@@ -110,8 +111,9 @@ struct MeasurePanel: View {
             contents
         }
         .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.15), radius: 10, y: 3)
+        .background(Self.fill, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Self.border, lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 3)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("MeasurePanel")
     }
@@ -126,6 +128,12 @@ struct MeasurePanel: View {
                 .accessibilityIdentifier("MeasureDeltasToggle")
             Divider()
             Text("Pin to Always Show").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if let picked = viewModel.measurePickSummary {
+                Text("Selected: " + picked)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("MeasurePickSummary")
+            }
             if viewModel.measureRows.isEmpty {
                 Text(viewModel.measurePrompt)
                     .font(.subheadline)
@@ -152,6 +160,7 @@ struct MeasurePanel: View {
                             viewModel.unpinMeasurement(pin.id)
                         } label: {
                             Image(systemName: "trash")
+                                .foregroundStyle(.red)
                         }
                         .buttonStyle(.borderless)
                         .accessibilityLabel("Delete")
@@ -174,10 +183,16 @@ struct MeasurePanel: View {
         }
     }
 
+    /// Solid, not a material: over the light viewport a translucent
+    /// material turned mid-grey in dark mode and greyed out every caption.
+    /// The system background keeps full contrast in light and dark.
+    static let fill = Color(uiColor: .systemBackground).opacity(0.97)
+    static let border = Color(uiColor: .separator)
+
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "line.3.horizontal")
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             Menu {
                 ForEach(EditorViewModel.MeasureType.allCases, id: \.self) { type in
@@ -189,8 +204,12 @@ struct MeasurePanel: View {
                     .accessibilityIdentifier("MeasureType-" + type.rawValue)
                 }
             } label: {
-                Label(viewModel.measureType.title, systemImage: viewModel.measureType.icon)
-                    .font(.subheadline.weight(.semibold))
+                Label {
+                    Text(viewModel.measureType.title).foregroundStyle(.primary)
+                } icon: {
+                    Image(systemName: viewModel.measureType.icon).foregroundStyle(Color.accentColor)
+                }
+                .font(.subheadline.weight(.semibold))
             }
             .accessibilityIdentifier("MeasureTypeMenu")
             Spacer()
