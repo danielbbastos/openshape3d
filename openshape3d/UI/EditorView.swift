@@ -1927,7 +1927,9 @@ struct EditorView: View {
             .overlay {
                 // Measure's panel stays up for the whole mode (spec §16.3).
                 if case .measuring = viewModel.mode {
-                    MeasurePanel(viewModel: viewModel)
+                    MeasurePanel(viewModel: viewModel,
+                                 compact: horizontalSizeClass == .compact,
+                                 bottomInset: bottomBarInset)
                 }
             }
             .overlay {

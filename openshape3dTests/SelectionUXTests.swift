@@ -527,4 +527,85 @@ final class SelectionUXTests: XCTestCase {
         }
         XCTAssertEqual(vm.activeSketch?.plane, .ground)
     }
+
+    // MARK: - Measure: quick face distance, pins that follow
+
+    /// A ray straight down onto the top face of the 2 mm box at `x`.
+    private func downAt(_ x: Float) -> Ray {
+        Ray(origin: SIMD3(x, 10, 0.3), direction: SIMD3(0, -1, 0))
+    }
+
+    /// Shift-click a second face while one is selected: the info bar reads
+    /// the distance between them without Measure mode (spec §16.3).
+    func testShiftClickingASecondFaceShowsTheDistanceBetweenThem() throws {
+        let viewModel = try makeViewModel()
+        _ = addBox(to: viewModel, name: "A", at: .zero)
+        _ = addBox(to: viewModel, name: "B", at: SIMD3(10, 0, 0))
+
+        viewModel.handle(.tap(ray: downAt(0)))
+        guard case .faceSelected = viewModel.mode else { return XCTFail("a tap selects A's top face") }
+        viewModel.tapShiftHeld = true
+        viewModel.handle(.tap(ray: downAt(10)))
+        viewModel.tapShiftHeld = false
+
+        guard case .faceSelected = viewModel.mode else { return XCTFail("the first face stays selected") }
+        let rows = Dictionary(viewModel.selectionMeasurements.map { ($0.label, $0.value) }, uniquingKeysWith: { a, _ in a })
+        XCTAssertEqual(rows["Parallel distance"], "0.00 mm", "the two tops are coplanar")
+        XCTAssertEqual(rows["Minimum distance"], "8.00 mm")
+        XCTAssertNotNil(rows["Area"], "the selected face's own rows stay")
+
+        // A plain tap ends the quick measurement.
+        viewModel.handle(.tap(ray: downAt(0)))
+        XCTAssertNil(viewModel.selectionMeasurements.first { $0.label == "Minimum distance" })
+    }
+
+    /// A pinned Object Measurement measures its items again: moving a body
+    /// changes the pinned gap, and undoing the move puts it back.
+    func testAPinnedDistanceFollowsAMovedBody() throws {
+        let viewModel = try makeViewModel()
+        _ = addBox(to: viewModel, name: "A", at: .zero)
+        let b = addBox(to: viewModel, name: "B", at: SIMD3(10, 0, 0))
+
+        viewModel.toggleMeasure()
+        XCTAssertEqual(viewModel.measureType, .object)
+        viewModel.handle(.tap(ray: downAt(0)))
+        viewModel.handle(.tap(ray: downAt(10)))
+        let gap = try XCTUnwrap(viewModel.measureRows.first { $0.kind == .minDistance })
+        XCTAssertEqual(gap.value, 8, accuracy: 1e-6)
+        viewModel.pinMeasurement(gap)
+        let pin = try XCTUnwrap(viewModel.session.document.pinnedMeasurements.first)
+        XCTAssertEqual(pin.sources?.count, 2, "the pin knows both faces")
+
+        var moved = b.transform
+        moved.translation.x += 5
+        viewModel.session.perform(TransformBodiesCommand(before: [b.id: b.transform], after: [b.id: moved]))
+        XCTAssertEqual(viewModel.livePin(pin).pin.value, 13, accuracy: 1e-6, "the gap grew with the move")
+        XCTAssertEqual(viewModel.livePin(pin).items.count, 2)
+
+        viewModel.session.undo()
+        XCTAssertEqual(viewModel.livePin(pin).pin.value, 8, accuracy: 1e-6)
+    }
+
+    /// A Point-to-Point pin rides on the body its points were picked on.
+    func testAPinnedPointDistanceRidesOnItsBody() throws {
+        let viewModel = try makeViewModel()
+        let a = addBox(to: viewModel, name: "A", at: .zero)
+
+        viewModel.toggleMeasure()
+        viewModel.measureType = .pointToPoint
+        // Two top corners of A, straight down onto them.
+        viewModel.handle(.tap(ray: Ray(origin: SIMD3(-1, 10, -1), direction: SIMD3(0, -1, 0))))
+        viewModel.handle(.tap(ray: Ray(origin: SIMD3(1, 10, -1), direction: SIMD3(0, -1, 0))))
+        let distance = try XCTUnwrap(viewModel.measureRows.first)
+        XCTAssertEqual(distance.value, 2, accuracy: 1e-6)
+        viewModel.pinMeasurement(distance)
+        let pin = try XCTUnwrap(viewModel.session.document.pinnedMeasurements.first)
+
+        var moved = a.transform
+        moved.translation.y += 7
+        viewModel.session.perform(TransformBodiesCommand(before: [a.id: a.transform], after: [a.id: moved]))
+        let live = viewModel.livePin(pin).pin
+        XCTAssertEqual(live.value, 2, accuracy: 1e-6, "a rigid move keeps the length")
+        XCTAssertEqual(live.points.first?.y ?? 0, 9, accuracy: 1e-6, "and the span moves with the body")
+    }
 }

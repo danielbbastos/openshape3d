@@ -1048,11 +1048,12 @@ nonisolated enum OCCTKernel {
     // MARK: Measure
 
     /// Measure ▸ one piece of a shape (the whole shape, a face or an edge),
-    /// decoded from `OCCTBridge.measureGeometry` (16 doubles; layout there).
+    /// decoded from `OCCTBridge.measureGeometry` (20 doubles; layout there).
+    /// `onFace` lies on the face; `mid` is an edge's middle by arc length.
     nonisolated enum MeasureGeometry: Equatable {
         case solid(volume: Double, centroid: SIMD3<Double>)
-        case surface(MeasureSurface, area: Double, centroid: SIMD3<Double>)
-        case curve(MeasureCurve, length: Double, start: SIMD3<Double>, end: SIMD3<Double>)
+        case surface(MeasureSurface, area: Double, centroid: SIMD3<Double>, onFace: SIMD3<Double>)
+        case curve(MeasureCurve, length: Double, start: SIMD3<Double>, end: SIMD3<Double>, mid: SIMD3<Double>)
     }
 
     static func measureGeometry(_ handle: BRepHandle, kind: MeasureKernelPiece.Kind,
@@ -1060,7 +1061,7 @@ nonisolated enum OCCTKernel {
         guard let data = OCCTBridge.measureGeometry(of: handle.shape, kind: kind.rawValue, index: index)
         else { return nil }
         let v: [Double] = data.withUnsafeBytes { Array($0.bindMemory(to: Double.self)) }
-        guard v.count == 16 else { return nil }
+        guard v.count == 20 else { return nil }
         func p(_ at: Int) -> SIMD3<Double> { SIMD3(v[at], v[at + 1], v[at + 2]) }
         switch kind {
         case .body:
@@ -1074,7 +1075,7 @@ nonisolated enum OCCTKernel {
             case 3: surface = .sphere(center: p(6), radius: v[12])
             default: surface = .other
             }
-            return .surface(surface, area: v[2], centroid: p(3))
+            return .surface(surface, area: v[2], centroid: p(3), onFace: p(14))
         case .edge:
             let start = p(3), end = p(6)
             let curve: MeasureCurve
@@ -1089,7 +1090,7 @@ nonisolated enum OCCTKernel {
             default:
                 curve = .other
             }
-            return .curve(curve, length: v[2], start: start, end: end)
+            return .curve(curve, length: v[2], start: start, end: end, mid: p(16))
         }
     }
 

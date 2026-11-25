@@ -49,11 +49,11 @@ nonisolated enum MeasureNotablePoints {
         let mids = OCCTKernel.edgeMidpoints(shape)
         var out: [Edge] = []
         for index in mids.keys.sorted() {
-            guard case .curve(let curve, _, let start, let end)? =
+            guard case .curve(let curve, _, let start, let end, let mid)? =
                     OCCTKernel.measureGeometry(shape, kind: .edge, index: index) else { continue }
             var center: SIMD3<Double>?
             if case .circle(let c, _, _, _) = curve { center = c }
-            out.append(Edge(start: start, end: end, mid: mids[index], center: center))
+            out.append(Edge(start: start, end: end, mid: mids[index] ?? mid, center: center))
         }
         return out
     }

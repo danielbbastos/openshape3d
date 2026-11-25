@@ -4692,7 +4692,7 @@ static void OS3DPut(double *row, int at, const gp_XYZ &v) {
     try {
         const TopoDS_Shape piece = OS3DMeasurePiece(shape->_shape, kind, index);
         if (piece.IsNull()) return nil;
-        double row[16] = {0};
+        double row[20] = {0};
         row[0] = (double)kind;
         if (kind == 0) {
             GProp_GProps props;
@@ -4716,6 +4716,18 @@ static void OS3DPut(double *row, int at, const gp_XYZ &v) {
             }
             row[2] = area;
             OS3DPut(row, 3, props.CentreOfMass().XYZ());
+            // A point ON the face, nearest its centroid: an annulus's
+            // centroid sits in its hole, and a pin finds the face again by
+            // the point it stored.
+            {
+                const TopoDS_Shape centre = BRepBuilderAPI_MakeVertex(props.CentreOfMass()).Shape();
+                BRepExtrema_DistShapeShape onFace(centre, face);
+                if (onFace.IsDone() && onFace.NbSolution() > 0) {
+                    OS3DPut(row, 14, onFace.PointOnShape2(1).XYZ());
+                } else {
+                    OS3DPut(row, 14, props.CentreOfMass().XYZ());
+                }
+            }
             switch (surf.GetType()) {
                 case GeomAbs_Plane: {
                     row[1] = 0;
@@ -4771,6 +4783,12 @@ static void OS3DPut(double *row, int at, const gp_XYZ &v) {
             row[2] = GCPnts_AbscissaPoint::Length(curve, first, last);
             OS3DPut(row, 3, curve.Value(first).XYZ());
             OS3DPut(row, 6, curve.Value(last).XYZ());
+            // The middle by arc length (as edgeMidpoints).
+            {
+                GCPnts_AbscissaPoint half(curve, row[2] / 2.0, first);
+                OS3DPut(row, 16, (half.IsDone() ? curve.Value(half.Parameter())
+                                                : curve.Value((first + last) / 2.0)).XYZ());
+            }
             switch (curve.GetType()) {
                 case GeomAbs_Line:
                     row[1] = 0;

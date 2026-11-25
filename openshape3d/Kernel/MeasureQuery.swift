@@ -74,11 +74,15 @@ nonisolated struct MeasureItem: Identifiable, @unchecked Sendable {
     /// and for highlighting.
     var triangles: [SIMD3<Double>] = []
     var kernel: MeasureKernelPiece?
+    /// A world point that lies ON the item (a face's point nearest its
+    /// centroid, an edge's middle, a body's centre of gravity): how a pin
+    /// finds the item again after the model changes.
+    var anchor: SIMD3<Double>?
 
     var id: Ref { ref }
 
     static func point(_ p: SIMD3<Double>, id: UUID = UUID()) -> MeasureItem {
-        MeasureItem(ref: .point(id), geometry: .point(p))
+        MeasureItem(ref: .point(id), geometry: .point(p), anchor: p)
     }
 }
 
@@ -101,6 +105,8 @@ nonisolated struct MeasureRow: Identifiable, Equatable, Sendable {
     /// What the row measures between, drawn when it is highlighted or
     /// pinned: a span's two ends, an angle's arm–vertex–arm, or nothing.
     var points: [SIMD3<Double>] = []
+    /// The items this reading is about — lit up when it is highlighted.
+    var refs: [MeasureItem.Ref] = []
 
     var id: Kind { kind }
 
@@ -159,11 +165,18 @@ nonisolated enum MeasureQuery {
     /// `deltas` adds the X/Y/Z components of every distance.
     static func rows(for items: [MeasureItem], deltas: Bool) -> [MeasureRow] {
         guard !items.isEmpty else { return [] }
+        let all = items.map(\.ref)
         if items.count == 3, let pts = allPoints(items) {
             guard let angle = MeasureKit.angleDegrees(pts[0], vertex: pts[1], pts[2]) else { return [] }
-            return [MeasureRow(kind: .angle, value: angle, points: pts)]
+            return [MeasureRow(kind: .angle, value: angle, points: pts, refs: all)]
         }
-        if items.count == 2 { return pairRows(items[0], items[1], deltas: deltas) }
+        if items.count == 2 {
+            return pairRows(items[0], items[1], deltas: deltas).map { row in
+                var row = row
+                row.refs = all
+                return row
+            }
+        }
         return sumRows(items)
     }
 
@@ -180,11 +193,29 @@ nonisolated enum MeasureQuery {
             case .solid(let v, _): volume += v; solids += 1
             }
         }
+        func refs(_ keep: (MeasureItem.Geometry) -> Bool) -> [MeasureItem.Ref] {
+            items.filter { keep($0.geometry) }.map(\.ref)
+        }
         var rows: [MeasureRow] = []
-        if curves > 0 { rows.append(MeasureRow(kind: .length, value: length)) }
-        if surfaces > 0 { rows.append(MeasureRow(kind: .area, value: area)) }
-        if solids > 0 { rows.append(MeasureRow(kind: .volume, value: volume)) }
-        if items.count == 1 { rows += roundRows(items[0]) }
+        if curves > 0 {
+            rows.append(MeasureRow(kind: .length, value: length,
+                                   refs: refs { if case .curve = $0 { true } else { false } }))
+        }
+        if surfaces > 0 {
+            rows.append(MeasureRow(kind: .area, value: area,
+                                   refs: refs { if case .surface = $0 { true } else { false } }))
+        }
+        if solids > 0 {
+            rows.append(MeasureRow(kind: .volume, value: volume,
+                                   refs: refs { if case .solid = $0 { true } else { false } }))
+        }
+        if items.count == 1 {
+            rows += roundRows(items[0]).map { row in
+                var row = row
+                row.refs = [items[0].ref]
+                return row
+            }
+        }
         return rows
     }
 

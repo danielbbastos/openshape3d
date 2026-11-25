@@ -109,6 +109,33 @@ final class MeasureQueryTests: XCTestCase {
         XCTAssertEqual(row(.length, in: rows)?.value ?? 0, 5 * .pi / 3, accuracy: 1e-9)
     }
 
+    /// Each reading names the items it is about, so highlighting it can
+    /// light them up: a mixed pick's length row is the edges' alone.
+    func testRowsNameTheItemsTheyAreAbout() throws {
+        let part = try box(10, 20, 30)
+        let top = try face(part, normal: SIMD3(0, 0, 1))
+        let line = MeasureItem.sketchEntity(.line(id: UUID(), a: .zero, b: SIMD2(3, 4)),
+                                            sketchID: SketchID(), plane: .ground)
+        let edge = MeasureItem.sketchEntity(.line(id: UUID(), a: .zero, b: SIMD2(0, 2)),
+                                            sketchID: SketchID(), plane: .ground)
+        let rows = MeasureQuery.rows(for: [top, line, edge], deltas: false)
+        XCTAssertEqual(row(.length, in: rows)?.refs, [line.ref, edge.ref])
+        XCTAssertEqual(row(.area, in: rows)?.refs, [top.ref])
+        let pair = MeasureQuery.rows(for: [top, line], deltas: false)
+        XCTAssertTrue(pair.allSatisfy { $0.refs == [top.ref, line.ref] })
+    }
+
+    func testAFaceAndAnEdgeKnowAPointOnThemselves() throws {
+        let pipe = try tube(outer: 10, inner: 6, height: 20)
+        // The annular cap's centroid is in the hole; its anchor is on it.
+        let cap = try face(pipe, normal: SIMD3(0, 1, 0))
+        let anchor = try XCTUnwrap(cap.anchor)
+        let r = simd_length(SIMD2(anchor.x, anchor.z))
+        XCTAssertGreaterThanOrEqual(r, 6 - 1e-6)
+        XCTAssertLessThanOrEqual(r, 10 + 1e-6)
+        XCTAssertEqual(anchor.y, 20, accuracy: 1e-9)
+    }
+
     // MARK: Pairs
 
     func testOppositeFacesAreParallelAtTheBoxHeight() throws {

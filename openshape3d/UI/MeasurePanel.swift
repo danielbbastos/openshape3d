@@ -14,20 +14,87 @@ import SwiftUI
 
 struct MeasurePanel: View {
     @Bindable var viewModel: EditorViewModel
+    /// A phone (compact width): the panel docks above the bottom bar as a
+    /// sheet that collapses to its header, instead of a floating card over
+    /// a viewport too narrow to keep it out of the way.
+    var compact = false
+    /// The bottom bar's height, to dock above it.
+    var bottomInset: CGFloat = 0
 
     /// Where the user dragged the card, from its home under the top edge.
     @AppStorage("os3d.measurePanelOffsetX") private var savedX = 0.0
     @AppStorage("os3d.measurePanelOffsetY") private var savedY = 0.0
+    /// The phone sheet is down to its header.
+    @AppStorage("os3d.measurePanelCollapsed") private var collapsed = false
     @GestureState private var drag: CGSize = .zero
+    /// The phone sheet's readings, measured, so it is no taller than them.
+    @State private var contentHeight: CGFloat = 0
+
+    private struct ContentHeightKey: PreferenceKey {
+        static let defaultValue: CGFloat = 0
+        static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+    }
 
     var body: some View {
         GeometryReader { proxy in
-            card
-                .frame(width: min(320, proxy.size.width - 32))
-                .offset(clamped(CGSize(width: savedX + drag.width, height: savedY + drag.height), in: proxy.size))
-                .frame(maxWidth: .infinity, alignment: .top)
-                .padding(.top, 8)
+            if compact {
+                sheet(height: proxy.size.height)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, bottomInset)
+            } else {
+                card
+                    .frame(width: min(320, proxy.size.width - 32))
+                    .offset(clamped(CGSize(width: savedX + drag.width, height: savedY + drag.height), in: proxy.size))
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .padding(.top, 8)
+            }
         }
+    }
+
+    /// The phone layout: grabber, header, and the readings in a scroll view
+    /// no taller than 40 % of the screen, so the model stays in view.
+    private func sheet(height: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Capsule()
+                .fill(.tertiary)
+                .frame(width: 36, height: 5)
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+                .onTapGesture { withAnimation(.snappy) { collapsed.toggle() } }
+                .accessibilityLabel(collapsed ? "Show measurements" : "Hide measurements")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityIdentifier("MeasurePanelGrabber")
+            header
+            if !collapsed {
+                // As tall as the readings, scrolling only past 40 % of the
+                // screen, so the model stays in view above it.
+                // A scroll view only once they outgrow that: iOS 26's scroll
+                // edge effect fades rows near its top edge, so short lists
+                // are drawn plain.
+                let measured = contents.background(GeometryReader { proxy in
+                    Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+                })
+                Group {
+                    if contentHeight > height * 0.4 {
+                        ScrollView { measured }.frame(height: height * 0.4)
+                    } else {
+                        measured
+                    }
+                }
+                .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
+            }
+        }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.15), radius: 10, y: -2)
+        .gesture(DragGesture(minimumDistance: 12).onEnded { value in
+            // Swipe down to collapse, up to expand.
+            if value.translation.height > 30 { withAnimation(.snappy) { collapsed = true } }
+            if value.translation.height < -30 { withAnimation(.snappy) { collapsed = false } }
+        })
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("MeasurePanel")
     }
 
     /// Keep at least the header on screen.
@@ -40,6 +107,18 @@ struct MeasurePanel: View {
     private var card: some View {
         VStack(alignment: .leading, spacing: 10) {
             header
+            contents
+        }
+        .padding(14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .shadow(color: .black.opacity(0.15), radius: 10, y: 3)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("MeasurePanel")
+    }
+
+    /// Deltas switch, readings and pins: the same in both layouts.
+    private var contents: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Toggle("Include X, Y, Z Deltas", isOn: Binding(
                 get: { viewModel.measureDeltas },
                 set: { viewModel.measureDeltas = $0 }))
@@ -62,10 +141,12 @@ struct MeasurePanel: View {
                 Divider()
                 Text("Pinned").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 ForEach(pins) { pin in
+                    let lit = viewModel.highlightedPinID == pin.id
                     HStack {
-                        Text(PinnedMeasurementsOverlay.text(for: pin))
+                        Text(PinnedMeasurementsOverlay.text(for: viewModel.livePin(pin).pin))
                             .font(.subheadline)
                             .monospacedDigit()
+                            .accessibilityIdentifier("PinnedMeasurementValue")
                         Spacer()
                         Button {
                             viewModel.unpinMeasurement(pin.id)
@@ -76,14 +157,21 @@ struct MeasurePanel: View {
                         .accessibilityLabel("Delete")
                         .accessibilityIdentifier("DeletePinnedMeasurement")
                     }
+                    .padding(.vertical, 2)
+                    .padding(.horizontal, 4)
+                    .background(lit ? Color.orange.opacity(0.18) : .clear, in: RoundedRectangle(cornerRadius: 6))
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside {
+                            viewModel.highlightedPinID = pin.id
+                        } else if lit {
+                            viewModel.highlightedPinID = nil
+                        }
+                    }
+                    .onTapGesture { viewModel.highlightedPinID = lit ? nil : pin.id }
                 }
             }
         }
-        .padding(14)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .shadow(color: .black.opacity(0.15), radius: 10, y: 3)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("MeasurePanel")
     }
 
     private var header: some View {
@@ -118,7 +206,7 @@ struct MeasurePanel: View {
             .accessibilityIdentifier("CloseMeasure")
         }
         .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 4)
+        .gesture(compact ? nil : DragGesture(minimumDistance: 4)
             .updating($drag) { value, state, _ in state = value.translation }
             .onEnded { value in
                 savedX += value.translation.width

@@ -577,15 +577,16 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
 
 /// Measure ▸ what one piece of a shape is, for the Measure tool's rows.
 /// `kind` 0 = the whole shape, 1 = face `index`, 2 = edge `index` (1-based
-/// indexed-map order, as everywhere else). Packed doubles, 16 per answer:
+/// indexed-map order, as everywhere else). Packed doubles, 20 per answer:
 /// - shape `[0]=0, [1] volume, [2…4] centre of mass`, rest 0.
 /// - face `[0]=1, [1] surfaceCode, [2] area, [3…5] centroid, [6…8] p,
-///   [9…11] d, [12] r, [13] s`, rest 0. surfaceCode 0 plane (p origin, d
+///   [9…11] d, [12] r, [13] s, [14…16] a point on the face nearest its
+///   centroid`, rest 0. surfaceCode 0 plane (p origin, d
 ///   outward normal), 1 cylinder (p on axis, d axis, r radius), 2 cone
 ///   (p apex, d axis, r semi-angle in radians, s reference radius), 3 sphere
 ///   (p centre, r radius), 4 other.
 /// - edge `[0]=2, [1] curveCode, [2] length, [3…5] start, [6…8] end,
-///   [9…11] c, [12…14] d, [15] r`. curveCode 0 line, 1 circle or arc
+///   [9…11] c, [12…14] d, [15] r, [16…18] the middle by arc length`. curveCode 0 line, 1 circle or arc
 ///   (c centre, d axis, r radius), 2 other.
 /// Nil on a null shape or a missing index.
 + (nullable NSData *)measureGeometryOfShape:(OCCTShape *)shape

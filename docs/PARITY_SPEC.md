@@ -2491,10 +2491,20 @@ info bar reads the same rows (a round face's radius, two bodies' minimum
 and central distance, sketch arcs and pairs). Command `view.measure`; MCP
 `measure` / `POST /v1/measure`. Tests: `MeasureQueryTests`,
 `MeasureNotablePointsTests`, `PinnedMeasurementTests`, `MeasureUITests`.
-Not yet: Shift-click two faces for a quick distance outside the mode, pins
-following geometry that moves (a pin keeps its reading), a phone-specific
-bottom-sheet layout (the card is the same on every size), and per-face
-highlight of the items a row refers to (the row's span is what lights up).
+2026-11-25, the rest: **Shift-click** a second face while one is selected
+and the info bar reads the distance between them (parallel, minimum,
+central, angle; the second face tinted, the span drawn) without Measure
+mode. **Pins follow their items** (`PinSource`): a body by id, a face or edge
+by a point on it in the body's own frame (the nearest kernel face / edge to
+it after an edit), a picked point carried by its body, a sketch entity —
+re-measured whenever the document changes (`EditorViewModel.livePin`); a
+pin whose item is gone keeps its last reading. On a **phone** the panel
+docks above the bottom bar as a sheet that hugs its rows (scrolling past
+40 % of the screen) and collapses to its header from the grabber or a
+swipe. **Highlighting a reading** (or a pinned one) tints exactly the items
+it is about (`MeasureRow.refs`) in orange, with its span. Remaining: a
+pinned Point-to-Point point rides rigidly with its body; it does not slide
+along when that body's shape is edited.
 **Feasibility:** [mesh-kernel OK]
 
 ### 16.4 Display Modes

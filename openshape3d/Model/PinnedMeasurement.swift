@@ -32,6 +32,11 @@ nonisolated struct PinnedMeasurement: Identifiable, Codable, Equatable, Sendable
     var quantity: MeasureRow.Quantity?
     /// Where the label of a row with no span sits (a face's centroid).
     var anchor: SIMD3<Double>?
+    /// What was measured, so the pin can measure it again when the model
+    /// changes. Nil in documents saved before pins followed their items
+    /// (and for a pin whose items cannot be named): those keep the reading
+    /// they were pinned with.
+    var sources: [PinSource]?
 
     /// Millimetres for a distance, degrees for an angle; a row's own unit.
     var value: Double {
@@ -83,10 +88,24 @@ nonisolated struct PinnedMeasurement: Identifiable, Codable, Equatable, Sendable
     }
 }
 
+/// One measured item, named so a pin can find it again: a body by id; a face
+/// or edge by a point on it in the BODY'S OWN coordinates (kernel face and
+/// edge numbers can change when the model is edited, the nearest face to a
+/// point on it is what the person meant); a notable point carried along by
+/// the body it was picked on; a sketch entity; or a plain world point.
+nonisolated enum PinSource: Codable, Equatable, Sendable {
+    case point(SIMD3<Double>)
+    case bodyPoint(body: UUID, local: SIMD3<Double>)
+    case body(UUID)
+    case face(body: UUID, local: SIMD3<Double>)
+    case edge(body: UUID, local: SIMD3<Double>)
+    case sketchEntity(sketch: UUID, entity: UUID)
+}
+
 extension PinnedMeasurement {
     /// A Measure row as a pin. A two-point distance and a three-point angle
     /// keep their own kinds (their value is recomputed from the points).
-    init(row: MeasureRow, anchor: SIMD3<Double>?) {
+    init(row: MeasureRow, anchor: SIMD3<Double>?, sources: [PinSource]? = nil) {
         switch row.kind {
         case .distance where row.points.count == 2:
             self.init(kind: .distance, points: row.points)
@@ -99,6 +118,7 @@ extension PinnedMeasurement {
             quantity = row.quantity
             self.anchor = row.points.isEmpty ? anchor : nil
         }
+        self.sources = sources
     }
 
     /// The row's title for a `row` pin; nil for a distance or an angle.

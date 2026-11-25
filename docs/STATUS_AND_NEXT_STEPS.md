@@ -46,6 +46,23 @@ Measure rebuilt to the whole of spec §16.3 (now ✅):
 - **Agent**: command `view.measure`; MCP op `measure` → `POST /v1/measure`
   (`AgentMeasureItem`), documented in the model-openshape3d skill.
 
+**Follow-up the same mission (2026-11-25):** Shift-click a second face for
+a quick face-to-face reading in the info bar (`handleQuickFaceMeasure`,
+before Shift's extend-selection path); pins re-measure their items
+(`PinSource`, `livePin`, cached per `session.changeCount`), finding a face
+or edge again by a point ON it in body coordinates — `measureGeometry` now
+returns 20 doubles, adding a point on the face nearest its centroid (an
+annulus's centroid is in its hole) and an edge's arc-length middle; rows
+carry `refs`, so highlighting tints the exact items; the phone sheet
+(`MeasurePanel(compact:)`). The notable-point picker now prefers the point
+nearer the eye when two lie equally close to the ray (a corner straight
+behind another used to win by list order). Tests in `SelectionUXTests`
+(quick distance, pins following a move and an undo, a point pin riding on
+its body) and `MeasureQueryTests` (row refs, a face's on-face anchor).
+Phone layout checked live on the iPhone 15 Pro simulator. Gotcha: inside a
+`ScrollView`, iOS 26's scroll edge effect faded the panel's first rows —
+the sheet only scrolls once its rows outgrow 40 % of the screen.
+
 **Known, not from this work:** `MeasureUITests.testFaceSelectionShowsAreaInInfoBar`
 and `testSeededBoxReportsExactGeometryValues` fail on this Mac's iPad
 (A16) iOS 26.0 simulator on `chore/xcode-26.0-build` too (main + build

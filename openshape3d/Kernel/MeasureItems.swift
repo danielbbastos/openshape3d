@@ -45,12 +45,13 @@ nonisolated extension MeasureItem {
            volume > 0 {
             return MeasureItem(ref: .body(body.id), geometry: .solid(volume: volume, centroid: centroid),
                                triangles: triangles,
-                               kernel: MeasureKernelPiece(shape: shape, kind: .body, index: 0))
+                               kernel: MeasureKernelPiece(shape: shape, kind: .body, index: 0),
+                               anchor: centroid)
         }
+        let centroid = meshCentroid(triangles)
         return MeasureItem(ref: .body(body.id),
-                           geometry: .solid(volume: MeasureKit.volume(of: body),
-                                            centroid: meshCentroid(triangles)),
-                           triangles: triangles)
+                           geometry: .solid(volume: MeasureKit.volume(of: body), centroid: centroid),
+                           triangles: triangles, anchor: centroid)
     }
 
     /// A face: kernel face `kernelIndex` when the body has a B-rep, else
@@ -61,13 +62,17 @@ nonisolated extension MeasureItem {
         let worldTris = worldTriangles(of: body, triangles: triangles)
         let ref = Ref.face(body.id, kernelIndex ?? -(triangles.min() ?? 0) - 1)
         if let kernelIndex, let shape = world ?? worldBRep(of: body),
-           case .surface(let surface, let area, let centroid)? =
+           case .surface(let surface, let area, let centroid, let onFace)? =
             OCCTKernel.measureGeometry(shape, kind: .face, index: kernelIndex) {
             return MeasureItem(ref: ref, geometry: .surface(surface, area: area, centroid: centroid),
                                triangles: worldTris,
-                               kernel: MeasureKernelPiece(shape: shape, kind: .face, index: kernelIndex))
+                               kernel: MeasureKernelPiece(shape: shape, kind: .face, index: kernelIndex),
+                               anchor: onFace)
         }
-        return MeasureItem(ref: ref, geometry: meshSurface(worldTris), triangles: worldTris)
+        let geometry = meshSurface(worldTris)
+        var anchor: SIMD3<Double>?
+        if case .surface(_, _, let centroid) = geometry { anchor = closestOnTriangles(centroid, worldTris) }
+        return MeasureItem(ref: ref, geometry: geometry, triangles: worldTris, anchor: anchor)
     }
 
     /// An edge: kernel edge `kernelIndex` when the body has a B-rep; else
@@ -76,17 +81,25 @@ nonisolated extension MeasureItem {
                      world: BRepHandle? = nil) -> MeasureItem {
         let ref = Ref.edge(body.id, kernelIndex ?? -1)
         if let kernelIndex, let shape = world ?? worldBRep(of: body),
-           case .curve(let curve, let length, let start, let end)? =
+           case .curve(let curve, let length, let start, let end, let mid)? =
             OCCTKernel.measureGeometry(shape, kind: .edge, index: kernelIndex) {
             let drawn: [SIMD3<Double>]
-            if case .line = curve { drawn = [start, end] } else { drawn = polyline.isEmpty ? [start, end] : polyline }
+            if case .line = curve {
+                drawn = [start, end]
+            } else if polyline.isEmpty {
+                drawn = circlePolyline(curve, start: start, end: end) ?? [start, mid, end]
+            } else {
+                drawn = polyline
+            }
             return MeasureItem(ref: ref, geometry: .curve(curve, length: length, polyline: drawn),
-                               kernel: MeasureKernelPiece(shape: shape, kind: .edge, index: kernelIndex))
+                               kernel: MeasureKernelPiece(shape: shape, kind: .edge, index: kernelIndex),
+                               anchor: mid)
         }
         var length = 0.0
         for i in polyline.indices.dropFirst() { length += simd_length(polyline[i] - polyline[i - 1]) }
         let curve: MeasureCurve = polyline.count == 2 ? .line(polyline[0], polyline[1]) : .other
-        return MeasureItem(ref: ref, geometry: .curve(curve, length: length, polyline: polyline))
+        return MeasureItem(ref: ref, geometry: .curve(curve, length: length, polyline: polyline),
+                           anchor: middle(of: polyline))
     }
 
     /// A sketch entity on its plane. Lines and circles / arcs are exact;
@@ -130,7 +143,52 @@ nonisolated extension MeasureItem {
             geometry = .curve(.other, length: length,
                               polyline: world(SketchEntity.splinePoints(points, closed: closed), closed: closed))
         }
-        return MeasureItem(ref: ref, geometry: geometry)
+        var anchor: SIMD3<Double>?
+        if case .curve(_, _, let polyline) = geometry { anchor = middle(of: polyline) }
+        return MeasureItem(ref: ref, geometry: geometry, anchor: anchor)
+    }
+
+    /// The point halfway along a polyline.
+    static func middle(of polyline: [SIMD3<Double>]) -> SIMD3<Double>? {
+        guard polyline.count > 1 else { return polyline.first }
+        var total = 0.0
+        for i in polyline.indices.dropFirst() { total += simd_length(polyline[i] - polyline[i - 1]) }
+        var walked = 0.0
+        for i in polyline.indices.dropFirst() {
+            let step = simd_length(polyline[i] - polyline[i - 1])
+            if walked + step >= total / 2, step > 0 {
+                return polyline[i - 1] + (polyline[i] - polyline[i - 1]) * ((total / 2 - walked) / step)
+            }
+            walked += step
+        }
+        return polyline.last
+    }
+
+    /// A kernel circle or arc as a drawn polyline (its ends and the 48
+    /// segments between), when an agent named the edge by index.
+    static func circlePolyline(_ curve: MeasureCurve, start: SIMD3<Double>, end: SIMD3<Double>) -> [SIMD3<Double>]? {
+        guard case .circle(let center, let axis, let radius, let sweep) = curve, radius > 0 else { return nil }
+        let n = simd_normalize(axis)
+        let u = start - center
+        guard simd_length(u) > 1e-12 else { return nil }
+        // The kernel reads a circle from its first to its last parameter,
+        // counter-clockwise about the circle's own axis.
+        let v = simd_cross(n, u)
+        let count = 48
+        return (0...count).map { i in
+            let t = sweep * Double(i) / Double(count)
+            return center + u * cos(t) + v * sin(t)
+        }
+    }
+
+    static func closestOnTriangles(_ p: SIMD3<Double>, _ triangles: [SIMD3<Double>]) -> SIMD3<Double>? {
+        var best: (SIMD3<Double>, Double)?
+        for t in stride(from: 0, to: triangles.count - 2, by: 3) {
+            let q = MeasureQuery.closestOnTriangle(p, triangles[t], triangles[t + 1], triangles[t + 2])
+            let d = simd_length(q - p)
+            if best == nil || d < best!.1 { best = (q, d) }
+        }
+        return best?.0
     }
 
     // MARK: Mesh fallbacks

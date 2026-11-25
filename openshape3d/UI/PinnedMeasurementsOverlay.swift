@@ -19,7 +19,10 @@ struct PinnedMeasurementsOverlay: View {
         let pins = viewModel.showPinnedMeasurements ? viewModel.session.document.pinnedMeasurements : []
         let measuring: Bool = { if case .measuring = viewModel.mode { return true }; return false }()
         ZStack {
-            ForEach(pins) { pin in
+            ForEach(pins) { stored in
+                // As it reads now: a pin measures its items again when the
+                // model changes (`EditorViewModel.livePin`).
+                let pin = viewModel.livePin(stored).pin
                 if let anchor = viewModel.cameraControl?.worldToScreenPoint(pin.labelAnchor) {
                     HStack(spacing: 4) {
                         Text(Self.text(for: pin))

@@ -84,6 +84,7 @@ final class EditorViewModel {
     var mode: EditorMode = .idle {
         didSet {
             if hoveredSketchTile != nil, !isPickingSketchPlane { hoveredSketchTile = nil }
+            if !quickFaceMeasure.isEmpty, mode != oldValue { quickFaceMeasure = [] }
             if mode.isSketching != oldValue.isSketching || mode.sketchID != oldValue.sketchID {
                 sketchViewChanged()
             }
@@ -1919,7 +1920,7 @@ final class EditorViewModel {
         // Pinned measurements (spec §16.3): their spans and angle arms, in
         // the measure accent, unless View ▸ Show Pinned Measurements is off.
         if showPinnedMeasurements, !session.document.pinnedMeasurements.isEmpty {
-            let segments = session.document.pinnedMeasurements.flatMap { $0.segments }
+            let segments = session.document.pinnedMeasurements.flatMap { livePin($0).pin.segments }
                 .map { SIMD3<Float>(Float($0.x), Float($0.y), Float($0.z)) }
             scene.sketchLines.append(SketchLineBatch(segments: segments, color: SIMD4(0.0, 0.52, 1.0, 0.85)))
         }
@@ -2160,6 +2161,7 @@ final class EditorViewModel {
             ))
         }
         addMeasureOverlay(into: &scene)
+        addQuickFaceMeasureOverlay(into: &scene)
         return scene
     }
 
@@ -7932,6 +7934,11 @@ final class EditorViewModel {
         // Items plane selection.
         axisEntryPart = nil
         selectedPlaneID = nil
+        // Shift-click a second face while one is selected: a quick
+        // face-to-face measurement in the info bar (spec §16.3), without
+        // Measure mode. Any other tap ends it.
+        if tapShiftHeld, handleQuickFaceMeasure(ray: ray) { return }
+        quickFaceMeasure = []
         // Selection Extension (spec §8.1): Shift-click — or, set to "Click
         // Adds", a plain click — extends the selection the way the Select
         // chip does. A click on empty space still clears, unless Shift asks
@@ -17436,6 +17443,10 @@ final class EditorViewModel {
     var measurePoints: [SIMD3<Double>] = [] {
         didSet { refreshMeasureRows() }
     }
+    /// The body each of `measurePoints` was picked on (nil: a sketch point),
+    /// so a pin moves with it.
+    @ObservationIgnored
+    private var measurePointOwners: [BodyID?] = []
 
     /// Object Measurements: what has been tapped, in order. A second tap on
     /// the same thing takes it out again.
@@ -17479,9 +17490,11 @@ final class EditorViewModel {
     }
 
     func clearMeasurePicks() {
+        measurePointOwners.removeAll()
         measurePoints.removeAll()
         measureItems.removeAll()
         highlightedMeasureRow = nil
+        highlightedPinID = nil
         measureHintBodyID = nil
         measureHintFaceCenter = nil
     }
@@ -17512,12 +17525,12 @@ final class EditorViewModel {
 
     /// The first reading as a pin, or nil while picks are missing.
     var measurementToPin: PinnedMeasurement? {
-        measureRows.first.map { PinnedMeasurement(row: $0, anchor: measureAnchor) }
+        measureRows.first.map(pinnedMeasurement(for:))
     }
 
     /// Measure ▸ Pin: keep this row in the model as an annotation.
     func pinMeasurement(_ row: MeasureRow) {
-        session.perform(PinMeasurementCommand(measurement: PinnedMeasurement(row: row, anchor: measureAnchor)))
+        session.perform(PinMeasurementCommand(measurement: pinnedMeasurement(for: row)))
         session.save()
     }
 
@@ -17527,6 +17540,192 @@ final class EditorViewModel {
         guard let row = measureRows.first else { return }
         pinMeasurement(row)
     }
+
+    /// A row as a pin that knows what it measured (`PinSource`), so it
+    /// measures again when the model changes.
+    private func pinnedMeasurement(for row: MeasureRow) -> PinnedMeasurement {
+        let sources: [PinSource]?
+        if measureType == .object {
+            let items = measureItems.filter { row.refs.contains($0.ref) }
+            let named = items.compactMap(pinSource(for:))
+            sources = named.count == items.count && !named.isEmpty ? named : nil
+        } else {
+            sources = measurePoints.enumerated().map { i, p in
+                guard i < measurePointOwners.count, let owner = measurePointOwners[i],
+                      let body = session.document.body(with: owner) else { return .point(p) }
+                return .bodyPoint(body: owner.raw, local: Self.local(p, in: body))
+            }
+        }
+        return PinnedMeasurement(row: row, anchor: measureAnchor, sources: sources)
+    }
+
+    private func pinSource(for item: MeasureItem) -> PinSource? {
+        switch item.ref {
+        case .point:
+            return item.anchor.map(PinSource.point)
+        case .body(let id):
+            return .body(id.raw)
+        case .face(let id, _), .edge(let id, _):
+            guard let body = session.document.body(with: id), let anchor = item.anchor else { return nil }
+            let local = Self.local(anchor, in: body)
+            if case .face = item.ref { return .face(body: id.raw, local: local) }
+            return .edge(body: id.raw, local: local)
+        case .sketchEntity(let sketch, let entity):
+            return .sketchEntity(sketch: sketch.raw, entity: entity)
+        }
+    }
+
+    private static func local(_ world: SIMD3<Double>, in body: Body) -> SIMD3<Double> {
+        let m = simd_inverse(body.transform.matrix) * SIMD4(world, 1)
+        return SIMD3(m.x, m.y, m.z)
+    }
+
+    // MARK: Pins that follow their items
+
+    /// A pin as it reads NOW: its items measured again on the current
+    /// model (a moved body, a resized face), or, when it has no sources or
+    /// one of them is gone, the reading it was pinned with. `items` are what
+    /// it measures, for highlighting.
+    struct LivePin {
+        var pin: PinnedMeasurement
+        var items: [MeasureItem]
+    }
+
+    @ObservationIgnored
+    private var livePinCache: [UUID: (changeCount: Int, live: LivePin)] = [:]
+
+    func livePin(_ pin: PinnedMeasurement) -> LivePin {
+        let count = session.changeCount
+        if let hit = livePinCache[pin.id], hit.changeCount == count, hit.live.pin.id == pin.id {
+            return hit.live
+        }
+        let live = measureAgain(pin) ?? LivePin(pin: pin, items: [])
+        if livePinCache.count > 512 { livePinCache.removeAll() }
+        livePinCache[pin.id] = (count, live)
+        return live
+    }
+
+    private func measureAgain(_ pin: PinnedMeasurement) -> LivePin? {
+        guard let sources = pin.sources, !sources.isEmpty else { return nil }
+        var items: [MeasureItem] = []
+        for source in sources {
+            guard let item = item(for: source) else { return nil }
+            items.append(item)
+        }
+        var live = pin
+        switch pin.kind {
+        case .distance, .angle:
+            let points = items.compactMap(\.anchor)
+            guard points.count == pin.points.count else { return nil }
+            live.points = points
+        case .row:
+            guard let kind = pin.rowKind.flatMap(MeasureRow.Kind.init(rawValue:)),
+                  let row = MeasureQuery.rows(for: items, deltas: true).first(where: { $0.kind == kind })
+            else { return nil }
+            live.storedValue = row.value
+            live.points = row.points
+            if row.points.isEmpty { live.anchor = items.first?.anchor ?? pin.anchor }
+        }
+        return LivePin(pin: live, items: items)
+    }
+
+    private func item(for source: PinSource) -> MeasureItem? {
+        let document = session.document
+        func body(_ id: UUID) -> Body? { document.body(with: BodyID(raw: id)) }
+        switch source {
+        case .point(let p):
+            return .point(p)
+        case let .bodyPoint(id, local):
+            guard let body = body(id) else { return nil }
+            return .point(body.transform.applying(to: local))
+        case .body(let id):
+            return body(id).map { MeasureItem.body($0) }
+        case let .face(id, local):
+            guard let body = body(id) else { return nil }
+            let kernel = body.brep.flatMap { OCCTKernel.nearestFaceIndex($0, to: local, tolerance: .greatestFiniteMagnitude) }
+            return MeasureItem.face(of: body, kernelIndex: kernel, triangles: faceRegion(of: body, near: local))
+        case let .edge(id, local):
+            guard let body = body(id) else { return nil }
+            if let brep = body.brep,
+               let index = OCCTKernel.nearestEdgeIndex(brep, to: local, tolerance: .greatestFiniteMagnitude) {
+                return MeasureItem.edge(of: body, kernelIndex: index, polyline: [])
+            }
+            let edges = EdgeTopology.selectableEdges(from: body.render)
+            let p = SIMD3<Float>(local)
+            guard let nearest = edges.min(by: {
+                Self.pointSegmentDistance(p, $0.start, $0.end) < Self.pointSegmentDistance(p, $1.start, $1.end)
+            }) else { return nil }
+            let chain = EdgeTopology.smoothChain(containing: nearest, in: edges)
+            let polyline = Self.orderedPolyline(chain).map { body.transform.applying(to: SIMD3<Double>($0)) }
+            return MeasureItem.edge(of: body, kernelIndex: nil, polyline: polyline)
+        case let .sketchEntity(sketchID, entityID):
+            guard let sketch = document.sketches.first(where: { $0.id.raw == sketchID }),
+                  let entity = sketch.entities.first(where: { $0.id == entityID }) else { return nil }
+            return MeasureItem.sketchEntity(entity, sketchID: sketch.id, plane: sketch.plane)
+        }
+    }
+
+    /// The render triangles of the face nearest a body-local point.
+    private func faceRegion(of body: Body, near local: SIMD3<Double>) -> [Int] {
+        let mesh = body.render
+        var best: (Int, Double)?
+        for t in 0..<mesh.triangleCount {
+            let corners = (0..<3).map { SIMD3<Double>(mesh.positions[Int(mesh.indices[t * 3 + $0])]) }
+            let d = simd_length(MeasureQuery.closestOnTriangle(local, corners[0], corners[1], corners[2]) - local)
+            if best == nil || d < best!.1 { best = (t, d) }
+        }
+        guard let seed = best?.0 else { return [] }
+        if let smooth = FaceTopology.smoothRegion(in: mesh, seedTriangle: seed), smooth.isCurved { return smooth.triangles }
+        return FaceTopology.planarFace(in: mesh, seedTriangle: seed)?.triangles ?? [seed]
+    }
+
+    // MARK: Shift-click two faces
+
+    /// The selected face and a Shift-clicked second face (spec §16.3: a
+    /// quick face-to-face distance without Measure mode).
+    private(set) var quickFaceMeasure: [MeasureItem] = [] {
+        didSet {
+            let rows = quickFaceMeasure.count == 2 ? MeasureQuery.rows(for: quickFaceMeasure, deltas: false) : []
+            let wanted: [MeasureRow.Kind] = [.parallelDistance, .minDistance, .centralDistance, .angle]
+            quickFaceRows = wanted.compactMap { kind in
+                rows.first { $0.kind == kind }.map {
+                    MeasurementRow(label: $0.title, value: Self.formattedReading($0.value, quantity: $0.quantity))
+                }
+            }
+            quickFaceSpan = rows.first { $0.kind == .parallelDistance && $0.points.count == 2 }?.points
+                ?? rows.first { $0.kind == .minDistance }?.points
+        }
+    }
+    private(set) var quickFaceRows: [MeasurementRow] = []
+    private var quickFaceSpan: [SIMD3<Double>]?
+
+    /// True when the Shift-click measured two faces.
+    private func handleQuickFaceMeasure(ray: Ray) -> Bool {
+        guard case .faceSelected(let selectedID) = mode, let context = toolContext,
+              let selectedBody = session.document.body(with: selectedID),
+              let hit = HitTester.pickBody(ray: ray, in: scene),
+              let body = session.document.body(with: hit.bodyID) else { return false }
+        // The selected face itself: nothing to compare.
+        if hit.bodyID == selectedID, context.faceTriangles.contains(hit.triangleIndex) { return false }
+        guard let second = measureFaceItem(body: body, hit: hit) else { return false }
+        quickFaceMeasure = [selectedFaceMeasureItem(body: selectedBody, triangles: context.faceTriangles), second]
+        return true
+    }
+
+    /// The Shift-clicked face, tinted, and the span between the two faces.
+    private func addQuickFaceMeasureOverlay(into scene: inout ViewportScene) {
+        guard quickFaceMeasure.count == 2 else { return }
+        func f(_ p: SIMD3<Double>) -> SIMD3<Float> { SIMD3(Float(p.x), Float(p.y), Float(p.z)) }
+        scene.profileFills.append(SketchFillBatch(triangles: quickFaceMeasure[1].triangles.map(f),
+                                                  color: SIMD4(0.0, 0.52, 1.0, 0.28)))
+        if let span = quickFaceSpan, span.count == 2 {
+            scene.sketchLines.append(SketchLineBatch(segments: span.map(f), color: SIMD4(1, 0.55, 0, 1)))
+        }
+    }
+
+    /// The pin a Pinned row's hover or tap is pointing at: its items light
+    /// up in the model.
+    var highlightedPinID: UUID?
 
     func unpinMeasurement(_ id: UUID) {
         guard let index = session.document.pinnedMeasurements.firstIndex(where: { $0.id == id }) else { return }
@@ -17571,20 +17770,23 @@ final class EditorViewModel {
 
     private func handleMeasureTap(ray: Ray) {
         highlightedMeasureRow = nil
+        highlightedPinID = nil
         if measureType == .object {
             handleObjectMeasureTap(ray: ray)
             return
         }
-        guard let point = nearestNotablePoint(to: ray) else {
+        guard let picked = nearestOwnedNotablePoint(to: ray) else {
             // Touch has no hover: a tap on a body shows its notable points.
             measureHintBodyID = HitTester.pickBody(ray: ray, in: scene)?.bodyID
             measureHintFaceCenter = faceCenter(under: ray)
             return
         }
         if measurePoints.count >= measureType.pointCount {
+            measurePointOwners.removeAll()
             measurePoints.removeAll() // next tap restarts the measurement
         }
-        measurePoints.append(point)
+        measurePointOwners.append(picked.owner)
+        measurePoints.append(picked.point)
     }
 
     /// A double-tap in Object Measurements takes the whole body.
@@ -17772,27 +17974,40 @@ final class EditorViewModel {
     /// sketch snap points (SnapEngine), every body's corners, edge middles
     /// and circle centres, and the centre of the face under the ray.
     private func nearestNotablePoint(to ray: Ray) -> SIMD3<Double>? {
+        nearestOwnedNotablePoint(to: ray)?.point
+    }
+
+    /// The same, with the body the point belongs to (nil: a sketch point).
+    private func nearestOwnedNotablePoint(to ray: Ray) -> (point: SIMD3<Double>, owner: BodyID?)? {
         let tolerance = max(0.5, 30 * worldPerPoint)
-        var best: (point: SIMD3<Double>, distance: Double)?
-        func consider(_ p: SIMD3<Double>) {
+        var best: (point: SIMD3<Double>, owner: BodyID?, distance: Double, depth: Float)?
+        func consider(_ p: SIMD3<Double>, _ owner: BodyID?) {
             let pf = SIMD3<Float>(Float(p.x), Float(p.y), Float(p.z))
             let t = simd_dot(pf - ray.origin, ray.direction)
             guard t > 0 else { return } // behind the camera
             let d = Double(simd_length(pf - ray.point(at: t)))
-            if d <= tolerance, best == nil || d < best!.distance {
-                best = (p, d)
+            guard d <= tolerance else { return }
+            // Two points the ray passes equally close to (a corner straight
+            // behind another): the one nearer the eye is the one in view.
+            if let current = best {
+                let closer = d < current.distance - 1e-6
+                let tiedButNearer = abs(d - current.distance) <= 1e-6 && t < current.depth
+                guard closer || tiedButNearer else { return }
             }
+            best = (p, owner, d, t)
         }
         for sketch in session.document.sketches where !sketch.isHidden {
             for local in SnapEngine.snapPoints(of: sketch) {
-                consider(sketch.plane.toWorld(local))
+                consider(sketch.plane.toWorld(local), nil)
             }
         }
         for body in session.document.bodies where !body.isHidden {
-            notablePoints(of: body).forEach(consider)
+            for p in notablePoints(of: body) { consider(p, body.id) }
         }
-        if let center = faceCenter(under: ray) { consider(center) }
-        return best?.point
+        if let center = faceCenter(under: ray) {
+            consider(center, HitTester.pickBody(ray: ray, in: scene)?.bodyID)
+        }
+        return best.map { ($0.point, $0.owner) }
     }
 
     // MARK: Moving a placed point
@@ -17821,8 +18036,9 @@ final class EditorViewModel {
     /// The dragged point snaps to the notable point under the finger.
     func moveMeasurePointDrag(ray: Ray) -> Bool {
         guard let index = measureDragIndex, index < measurePoints.count,
-              let point = nearestNotablePoint(to: ray), point != measurePoints[index] else { return false }
-        measurePoints[index] = point
+              let picked = nearestOwnedNotablePoint(to: ray), picked.point != measurePoints[index] else { return false }
+        if index < measurePointOwners.count { measurePointOwners[index] = picked.owner }
+        measurePoints[index] = picked.point
         return true
     }
 
@@ -17836,19 +18052,31 @@ final class EditorViewModel {
         guard case .measuring = mode else { return }
         let accent = SIMD4<Float>(0.0, 0.52, 1.0, 1)
         func f(_ p: SIMD3<Double>) -> SIMD3<Float> { SIMD3(Float(p.x), Float(p.y), Float(p.z)) }
-        var lines: [SIMD3<Float>] = []
-        for item in measureItems {
+        let orange = SIMD4<Float>(1, 0.55, 0, 1)
+        // The items a highlighted reading (or pinned reading) is about are
+        // drawn in orange; the other picks in the measure blue.
+        let highlightedRefs = Set(measureRows.first { $0.kind == highlightedMeasureRow }?.refs ?? [])
+        func draw(_ item: MeasureItem, lit: Bool) {
             switch item.geometry {
             case .curve(_, _, let polyline):
+                var lines: [SIMD3<Float>] = []
                 for i in polyline.indices.dropFirst() { lines += [f(polyline[i - 1]), f(polyline[i])] }
+                if !lines.isEmpty { scene.sketchLines.append(SketchLineBatch(segments: lines, color: lit ? orange : accent)) }
             case .surface, .solid:
-                scene.profileFills.append(SketchFillBatch(triangles: item.triangles.map(f),
-                                                          color: SIMD4(0.0, 0.52, 1.0, 0.28)))
+                scene.profileFills.append(SketchFillBatch(
+                    triangles: item.triangles.map(f),
+                    color: lit ? SIMD4(1, 0.55, 0, 0.35) : SIMD4(0.0, 0.52, 1.0, 0.28)))
             case .point:
                 break
             }
         }
-        if !lines.isEmpty { scene.sketchLines.append(SketchLineBatch(segments: lines, color: accent)) }
+        for item in measureItems { draw(item, lit: highlightedRefs.contains(item.ref)) }
+        if let id = highlightedPinID, let pin = session.document.pinnedMeasurements.first(where: { $0.id == id }) {
+            let live = livePin(pin)
+            live.items.forEach { draw($0, lit: true) }
+            let segments = live.pin.segments.map(f)
+            if !segments.isEmpty { scene.sketchLines.append(SketchLineBatch(segments: segments, color: orange)) }
+        }
         guard measureType == .object else {
             // Notable-point hints: small crosses on the body under the pointer.
             var hints: [SIMD3<Double>] = []
@@ -17932,7 +18160,7 @@ final class EditorViewModel {
             return [
                 MeasurementRow(label: "Area", value: Self.formattedArea(area)),
                 MeasurementRow(label: "Perimeter", value: Self.formattedLength(perimeter)),
-            ] + round
+            ] + round + quickFaceRows
         case .selected(let id), .editingPrimitive(let id):
             if selection.count > 1 {
                 // Multi-selection (plan §B13): count + combined world bounds.
