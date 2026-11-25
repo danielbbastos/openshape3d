@@ -32,9 +32,16 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     var azimuth: Float = .pi / 5      // radians around +Y, 0 looks down -Z
     var elevation: Float = .pi / 7    // radians above the ground plane
     var projection: CameraProjection = .perspective(fovY: TurntableCamera.defaultFovY)
+    /// Turn of the picture about the line of sight, radians; positive turns
+    /// it counter-clockwise. Set by the spin arrows over the orientation cube
+    /// (spec §7.2); named views and head-on flights put it back to 0.
+    var roll: Float = 0
 
     static let defaultFovY: Float = 40 * .pi / 180
-    static let elevationLimit: Float = 89 * .pi / 180
+    /// A true plan view: the view matrix takes its up vector from the
+    /// orbit angles (`up`), so ±90° no longer degenerates the way a fixed
+    /// Y-up look-at did — and Top / Bottom / a horizontal face read as flat.
+    static let elevationLimit: Float = .pi / 2
     /// Farthest a pinch can dolly out, mm (100 m: a room scan still fits).
     static let maxZoomDistance: Float = 100_000
 
@@ -58,7 +65,21 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     }
 
     var viewMatrix: simd_float4x4 {
-        Matrices.lookAt(eye: position, target: target, up: SIMD3(0, 1, 0))
+        Matrices.lookAt(eye: position, target: target, up: up)
+    }
+
+    /// Screen-up in world space: the direction the eye moves as elevation
+    /// grows, always square to the view. Below ±90° it is world Y projected
+    /// onto the view plane (the old fixed Y-up result); at ±90° it stays
+    /// defined, pointing along the azimuth.
+    var up: SIMD3<Float> {
+        let level = SIMD3(-sin(elevation) * sin(azimuth), cos(elevation), -sin(elevation) * cos(azimuth))
+        guard roll != 0 else { return level }
+        // Turned about the line of sight: toward screen-right turns the
+        // picture counter-clockwise.
+        let back = SIMD3(cos(elevation) * sin(azimuth), sin(elevation), cos(elevation) * cos(azimuth))
+        let right = simd_cross(level, back)
+        return level * cos(roll) + right * sin(roll)
     }
 
     /// `centerOffset` moves the image's centre — where the target lands — off
@@ -99,8 +120,13 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     mutating func orbit(deltaPixels: CGSize, viewportSize: CGSize) {
         guard viewportSize.width > 0, viewportSize.height > 0 else { return }
         let sensitivity: Float = 2 * .pi / Float(min(viewportSize.width, viewportSize.height))
-        azimuth -= Float(deltaPixels.width) * sensitivity
-        elevation += Float(deltaPixels.height) * sensitivity
+        // A spun view: undo the spin, so a drag still turns the model the way
+        // the finger moves on screen.
+        let c = cos(roll), s = sin(roll)
+        let dx = Float(deltaPixels.width) * c - Float(deltaPixels.height) * s
+        let dy = Float(deltaPixels.width) * s + Float(deltaPixels.height) * c
+        azimuth -= dx * sensitivity
+        elevation += dy * sensitivity
         elevation = min(max(elevation, -Self.elevationLimit), Self.elevationLimit)
     }
 
@@ -236,8 +262,7 @@ nonisolated enum StandardView: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// The pose for this view, keeping target/distance/projection. Top and
-    /// Bottom clamp to ±89° (TurntableCamera.elevationLimit) — 1° short of a
-    /// true plan view, because the turntable's fixed Y-up degenerates at ±90°.
+    /// Bottom look straight down / up (±elevationLimit = ±90°).
     /// They square the azimuth up to the nearest quadrant: near-vertical, the
     /// azimuth IS the on-screen roll, and a plan view that keeps an arbitrary
     /// orbit angle comes out rolled by that angle (a 36° tilt was reported
@@ -245,6 +270,7 @@ nonisolated enum StandardView: String, CaseIterable, Identifiable, Sendable {
     /// quadrant rather than always 0 so the flight stays short.
     func applied(to camera: TurntableCamera) -> TurntableCamera {
         var cam = camera
+        cam.roll = 0
         switch self {
         case .isometric:
             cam.azimuth = .pi / 5

@@ -258,7 +258,7 @@ final class CameraTests: XCTestCase {
         let right = StandardView.right.applied(to: camera)
         XCTAssertEqual(right.azimuth, .pi / 2, accuracy: 1e-6)
 
-        // Top/bottom stop at the ±89° clamp (1° off a true plan view) and
+        // Top/bottom look straight down / up (±90°) and
         // square the azimuth to the nearest quadrant (the default 36° → 0).
         let top = StandardView.top.applied(to: camera)
         XCTAssertEqual(top.elevation, TurntableCamera.elevationLimit, accuracy: 1e-6)
@@ -361,5 +361,81 @@ final class CameraTests: XCTestCase {
         XCTAssertEqual(StandardView.bottom.applied(to: cam).azimuth, .pi / 2, accuracy: 1e-6)
         cam.azimuth = -100 * .pi / 180
         XCTAssertEqual(StandardView.top.applied(to: cam).azimuth, -.pi / 2, accuracy: 1e-6)
+    }
+
+    /// Top is a true plan view: a vertical wall projects to a line (no
+    /// sliver of its side), and the view matrix stays finite at 90°.
+    func testTopViewLooksStraightDownWithAFiniteViewMatrix() {
+        for azimuth: Float in [0, .pi / 2, .pi, -.pi / 2] {
+            var camera = TurntableCamera()
+            camera.azimuth = azimuth
+            camera.projection = .orthographic
+            let top = StandardView.top.applied(to: camera)
+            let vp = top.viewProjection(aspect: 1.5)
+            for c in 0..<4 { for r in 0..<4 { XCTAssertTrue(vp[c][r].isFinite) } }
+            // The top and bottom of a vertical edge land on the same pixel.
+            let a = vp * SIMD4<Float>(3, 0, -2, 1)
+            let b = vp * SIMD4<Float>(3, 10, -2, 1)
+            XCTAssertEqual(a.x / a.w, b.x / b.w, accuracy: 1e-5)
+            XCTAssertEqual(a.y / a.w, b.y / b.w, accuracy: 1e-5)
+        }
+    }
+
+    /// Below the pole the angle-derived up matches the old fixed Y-up look-at.
+    func testUpMatchesWorldYLookAtOffThePole() {
+        var camera = TurntableCamera()
+        camera.azimuth = 0.7; camera.elevation = 0.4
+        let old = Matrices.lookAt(eye: camera.position, target: camera.target, up: SIMD3(0, 1, 0))
+        let new = camera.viewMatrix
+        for c in 0..<4 { for r in 0..<4 { XCTAssertEqual(old[c][r], new[c][r], accuracy: 1e-5) } }
+    }
+
+    // MARK: - Spin (roll about the line of sight)
+
+    private func screen(_ camera: TurntableCamera, _ p: SIMD3<Float>) -> SIMD2<Float> {
+        let c = camera.viewProjection(aspect: 1) * SIMD4<Float>(p, 1)
+        return SIMD2(c.x / c.w, c.y / c.w)
+    }
+
+    /// A positive roll turns the picture counter-clockwise: what sat at
+    /// screen-right ends up at screen-top after 90°.
+    func testPositiveRollTurnsThePictureCounterClockwise() {
+        var camera = TurntableCamera()
+        camera.azimuth = 0; camera.elevation = 0; camera.projection = .orthographic
+        let point = SIMD3<Float>(2, 0, 0)
+        let before = screen(camera, point)
+        XCTAssertGreaterThan(before.x, 0.1)
+        camera.roll = .pi / 2
+        let after = screen(camera, point)
+        XCTAssertEqual(after.x, 0, accuracy: 1e-5)
+        XCTAssertEqual(after.y, before.x, accuracy: 1e-5)
+    }
+
+    /// In a spun view a drag still turns the model the way the finger moves.
+    func testOrbitFollowsTheFingerInASpunView() {
+        var level = TurntableCamera()
+        level.azimuth = 0; level.elevation = 0; level.projection = .orthographic
+        var spun = level
+        spun.roll = .pi / 2
+        let point = SIMD3<Float>(0.3, 0.2, 2)
+        for drag in [CGSize(width: 6, height: 0), CGSize(width: 0, height: 6)] {
+            var a = level, b = spun
+            a.orbit(deltaPixels: drag, viewportSize: viewport)
+            b.orbit(deltaPixels: drag, viewportSize: viewport)
+            let moveLevel = screen(a, point) - screen(level, point)
+            let moveSpun = screen(b, point) - screen(spun, point)
+            let similarity = simd_dot(simd_normalize(moveLevel), simd_normalize(moveSpun))
+            XCTAssertGreaterThan(similarity, 0.95, "drag \(drag)")
+            XCTAssertEqual(b.roll, .pi / 2, "orbiting keeps the spin")
+        }
+    }
+
+    /// Named views and cube snaps stand the picture upright again.
+    func testNamedViewsAndCubeSnapsClearTheRoll() {
+        var camera = TurntableCamera()
+        camera.roll = 1.2
+        XCTAssertEqual(StandardView.front.applied(to: camera).roll, 0)
+        XCTAssertEqual(StandardView.top.applied(to: camera).roll, 0)
+        XCTAssertEqual(OrientationCube.pose(lookingAlong: SIMD3(1, 0, 0), from: camera).roll, 0)
     }
 }

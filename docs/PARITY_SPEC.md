@@ -516,10 +516,16 @@ sketch tool with no plane shows the THREE world-plane tiles at the origin
 or the bare ground starts the sketch there with a head-on camera animation
 (`handlePlanePick`, `moveCameraHeadOn` for arbitrary planes); a selected
 face also offers "Sketch" directly (`startSketch` reads the face plane).
-Same-plane sketches are reused as one sketch item (the reference app's rule), and
-re-opening an auto-hidden sketch makes it visible again (`beginSketch`).
-Missing: hover grid-follow, Space-bar entry, body-intersection snap points
-and the associative intersection coincidence, Normal to Sketch button.
+Each entry makes a new sketch, even on a coincident plane (a deliberate
+choice, though the reference app reuses one right after), and re-opening an auto-hidden sketch makes it visible again (`beginSketch`).
+A finger double-tap on the grid, a planar face or a construction plane
+starts a sketch; hover + Space does with a pointer; Sketch shows the three
+rectangles at once. The cube and named views define a plane. Normal to Sketch
+restores the 2D view after orbiting. Which details are inferred rather than
+sourced: STATUS_AND_NEXT_STEPS "sketch view" mission log.
+While the rectangles are up the grid follows the one under the pointer.
+Missing: body-intersection snap points and the associative intersection
+coincidence. Same-plane sketches are NOT reused (see STATUS_AND_NEXT_STEPS).
 **Feasibility:** [mesh-kernel OK]
 
 ### 2.4 Changing a sketch plane / moving sketches
@@ -602,8 +608,10 @@ center points. Used for measurement, constraints, alignment; visibility via
 Snap To settings.
 **Status:** 🟡 partial — endpoints, line midpoints, rect corners, arc
 endpoints, circle/ellipse/arc centers, and polygon vertices in sketch space
-(`SnapEngine.snapPoints`); Measure's point-to-point mode also offers body
-vertices. Missing: intersection points, face/edge-derived points as general
+(`SnapEngine.snapPoints`); Measure's point modes also offer body
+corners, edge middles, circle and arc centres from the kernel edges, and the
+centre of the face under the pointer (`MeasureNotablePoints`, 2026-11-24).
+Missing: intersection points, face/edge-derived points as general (sketch)
 snap targets.
 **Feasibility:** [mesh-kernel OK]
 
@@ -1496,13 +1504,13 @@ drags transform, and drags starting over a filled profile begin a pull
 to the `ViewportView.gestureDragBegan` delegate first and falls back to
 orbit only when no tool claims it). Mid-sketch orbit: tapping the ACTIVE
 sketch tool deselects it (`deselectSketchTool`, `tool: nil`), after which
-empty-space drags orbit and "Look at Sketch" restores head-on. That
+empty-space drags orbit and "Normal to Sketch" restores head-on. That
 mirrors the reference app's own
 convention, so the level stands (`TurntableCamera.orbit/pan/zoom`);
 double-tap empty space fits the scene. The Apple Pencil now draws sketch
 strokes (`.pencil` accepted on the one-finger recognizer, with
 pencil-touch tracking for arbitration). Missing: 2-finger twist rotation,
-zoom-to-face on double-tap (double-tap on a body selects it instead —
+zoom-to-face (a finger double-tap starts a sketch, a mouse one selects —
 deliberate choice), presets, scroll/modifier desktop mappings.
 **Feasibility:** [mesh-kernel OK]
 
@@ -1612,7 +1620,7 @@ can invert this — built 2026-10-13, Settings ▸ Interface; §17). Selecting a
 editing that sketch without rotating the camera.
 **Status:** 🟡 partial — tap = planar face selection with orange highlight
 (`selectFaceOrBody` + `FaceTopology`), fallback to whole body on curved
-regions; double-tap = whole body; tap empty = deselect; sketch elements are
+regions; double-click (finger: in Select mode) = whole body; tap empty = deselect; sketch elements are
 tap-selectable while in sketch mode (`selectedSketchEntityIDs`). Missing:
 edge selection, multi-select, highlight-through-occluders,
 jump-into-sketch-on-tap from 3D.
@@ -2462,21 +2470,41 @@ points; placed points movable), 3-Point Angle; optional X/Y/Z deltas; Pin to
 Always Show keeps measurements as in-model annotations (appearance toggle);
 hover a panel row to highlight the referenced geometry. Shift-click two faces
 for a quick face-to-face distance.
-**Status:** 🟡 partial — a selection info bar shows without any mode
-(`SelectionInfoBar` + `MeasureKit`): face area, body volume
-(signed-tetrahedron sum) + bounding box, sketch-entity length and
-radius/diameter; and a palette Measure mode measures point-to-point
-distance with X/Y/Z deltas over notable points (sketch snap points + body
-vertices, cross markers + span line rendered in the overlay). **3-Point
-Angle and Pin (2026-10-12):** the pill's type menu switches to 3-Point Angle
-(first arm, corner, second arm → degrees, both arms drawn); **Pin** keeps the
-current reading in the model as a labelled annotation
-(`PinnedMeasurement`, undoable, saved in the project and the .os3d archive),
-View ▸ Show Pinned Measurements hides them, and in Measure mode each label's
-✕ unpins it (`PinnedMeasurementTests`, `MeasureUITests`). Missing: the
-movable panel, Object Measurements as a type (the info bar covers it),
-min-distance/central-distance, row-hover highlighting, and pins following
-geometry that moves.
+**Status:** ✅ (2026-11-24, `feat/measure-parity`) — Measure is a floating,
+draggable **panel** (`MeasurePanel`): the Measure menu (**Object
+Measurements**, the default; **Point-to-Point**; **3-Point Angle**),
+**Include X, Y, Z Deltas**, **Pin to Always Show** (every reading with a
+Pin) and **Pinned** (with Delete). Object Measurements taps bodies' faces
+and edges and sketch shapes (a double-tap takes the whole body) and reads
+`MeasureQuery`'s rows: length / area / volume summed, radius and diameter
+(arc, circle, cylinder, cone, sphere), an arc's central angle, angle and
+perpendicular angle, minimum distance, central distance (a body's centre
+of gravity), parallel distance (concentric items: radial difference) and
+X/Y/Z. Exact from OCCT (`OCCTBridge.measureGeometry` / `minimumDistance`,
+`BRepExtrema_DistShapeShape`) on analytic bodies; exact point / segment /
+triangle distances for meshes and sketches. Notable points come from the
+kernel edges (corners, edge middles, circle and arc centres) plus the face
+centre under the pointer, shown as hints on hover (tap on touch); a placed
+point can be dragged to another. Hovering or tapping a panel row highlights
+its span. Any row pins (`PinnedMeasurement.kind == .row`). The selection
+info bar reads the same rows (a round face's radius, two bodies' minimum
+and central distance, sketch arcs and pairs). Command `view.measure`; MCP
+`measure` / `POST /v1/measure`. Tests: `MeasureQueryTests`,
+`MeasureNotablePointsTests`, `PinnedMeasurementTests`, `MeasureUITests`.
+2026-11-25, the rest: **Shift-click** a second face while one is selected
+and the info bar reads the distance between them (parallel, minimum,
+central, angle; the second face tinted, the span drawn) without Measure
+mode. **Pins follow their items** (`PinSource`): a body by id, a face or edge
+by a point on it in the body's own frame (the nearest kernel face / edge to
+it after an edit), a picked point carried by its body, a sketch entity —
+re-measured whenever the document changes (`EditorViewModel.livePin`); a
+pin whose item is gone keeps its last reading. On a **phone** the panel
+docks above the bottom bar as a sheet that hugs its rows (scrolling past
+40 % of the screen) and collapses to its header from the grabber or a
+swipe. **Highlighting a reading** (or a pinned one) tints exactly the items
+it is about (`MeasureRow.refs`) in orange, with its span. Remaining: a
+pinned Point-to-Point point rides rigidly with its body; it does not slide
+along when that body's shape is edited.
 **Feasibility:** [mesh-kernel OK]
 
 ### 16.4 Display Modes

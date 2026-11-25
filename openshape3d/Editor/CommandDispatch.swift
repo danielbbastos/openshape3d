@@ -54,7 +54,7 @@ extension CommandRegistry {
         "bool.union", "bool.subtract", "bool.intersect",
 
         // Transform.
-        "model.move", "transform.scaleUniform", "transform.pattern",
+        "model.move", "transform.scaleUniform", "transform.pattern", "transform.mirror",
 
         // Direct modeling — the face tools shipped 2026-08-29.
         "model.deleteFace", "model.replaceFace", "model.imprint",
@@ -67,7 +67,7 @@ extension CommandRegistry {
 
         // View.
         "view.front", "view.back", "view.left", "view.right",
-        "view.top", "view.bottom", "view.isometric", "view.fit",
+        "view.top", "view.bottom", "view.isometric", "view.fit", "view.measure", "view.resetViewAndGrid",
         "view.nearestOrtho", "view.rotateLeft15", "view.rotateRight15", "view.rotateUp15",
         "view.rotateDown15", "view.rotateLeft45", "view.rotateRight45", "view.rotateUp45",
         "view.rotateDown45", "view.fieldOfView", "view.accuracyReport", "view.deviationPreview", "view.lockGrid",
@@ -214,6 +214,10 @@ extension EditorViewModel {
             guard canBeginPattern else { return false }
             beginPattern()
             return true
+        case "transform.mirror":
+            // Mirror Bodies: pick the face or plane to mirror across.
+            beginMirror()
+            return true
 
         // MARK: Edit
         case "edit.undo":
@@ -254,6 +258,8 @@ extension EditorViewModel {
         case "view.bottom":     applyStandardView(.bottom);     return true
         case "view.isometric":  applyStandardView(.isometric);  return true
         case "view.fit":        fitView();                      return true
+        case "view.measure":    toggleMeasure();                return true
+        case "view.resetViewAndGrid": resetViewAndGrid();       return true
         case "view.nearestOrtho": nearestOrthoView();           return true
         case "view.rotateLeft15":  rotateView(yaw: -15);        return true
         case "view.rotateRight15": rotateView(yaw: 15);         return true

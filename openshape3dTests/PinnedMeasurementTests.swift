@@ -65,4 +65,49 @@ final class PinnedMeasurementTests: XCTestCase {
         let old = try XCTUnwrap(ProjectArchive(name: "Old").encoded())
         XCTAssertNil(try XCTUnwrap(ProjectArchive.decode(old)).pinnedMeasurements)
     }
+
+    // MARK: Rows (Object Measurements)
+
+    func testAnAreaRowPinsWithItsReadingAtTheFaceCentre() {
+        let row = MeasureRow(kind: .area, value: 16)
+        let pin = PinnedMeasurement(row: row, anchor: SIMD3(2, 4, 2))
+        XCTAssertEqual(pin.kind, .row)
+        XCTAssertEqual(pin.value, 16)
+        XCTAssertEqual(pin.quantity, .area)
+        XCTAssertEqual(pin.rowTitle, "Area")
+        XCTAssertEqual(pin.labelAnchor, SIMD3(2, 4, 2))
+        XCTAssertTrue(pin.segments.isEmpty)
+    }
+
+    func testAMinimumDistanceRowDrawsItsSpan() {
+        let row = MeasureRow(kind: .minDistance, value: 5, points: [.zero, SIMD3(0, 5, 0)])
+        let pin = PinnedMeasurement(row: row, anchor: nil)
+        XCTAssertEqual(pin.segments, [.zero, SIMD3(0, 5, 0)])
+        XCTAssertEqual(pin.labelAnchor, SIMD3(0, 2.5, 0))
+    }
+
+    func testATwoPointDistanceRowStaysADistancePin() {
+        let row = MeasureRow(kind: .distance, value: 5, points: [.zero, SIMD3(3, 4, 0)])
+        XCTAssertEqual(PinnedMeasurement(row: row, anchor: nil).kind, .distance)
+    }
+
+    /// Documents saved before rows could be pinned have no row fields.
+    func testOlderPinsStillDecode() throws {
+        let json = #"[{"id":"9C1E2B76-8D51-4C47-9E5B-1A3D2F0C4B11","kind":"distance","points":[[0,0,0],[3,4,0]]}]"#
+        let pins = try JSONDecoder().decode([PinnedMeasurement].self, from: Data(json.utf8))
+        XCTAssertEqual(pins.first?.value ?? 0, 5, accuracy: 1e-12)
+        XCTAssertNil(pins.first?.rowKind)
+    }
+
+    /// Two labels at one spot: the second moves below the first.
+    func testPinnedLabelsAtOneSpotStack() throws {
+        let size = CGSize(width: 120, height: 24)
+        let spots = PinnedMeasurementsOverlay.layOut(anchors: [CGPoint(x: 100, y: 100), CGPoint(x: 110, y: 104), nil],
+                                                     sizes: [size, size, size])
+        let first = try XCTUnwrap(spots[0]), second = try XCTUnwrap(spots[1])
+        XCTAssertEqual(first, CGPoint(x: 100, y: 100))
+        XCTAssertGreaterThanOrEqual(second.y - first.y, size.height, "no overlap")
+        XCTAssertEqual(second.x, 110, "only moved down")
+        XCTAssertNil(spots[2])
+    }
 }

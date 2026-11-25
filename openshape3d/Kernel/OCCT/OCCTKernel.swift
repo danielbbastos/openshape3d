@@ -766,6 +766,16 @@ nonisolated enum OCCTKernel {
         return index > 0 ? Int(index) : nil
     }
 
+    /// The kernel face nearest a point in the shape's own frame — a tapped
+    /// render triangle's face (Measure). Nil when nothing is within tolerance.
+    static func nearestFaceIndex(_ handle: BRepHandle, to point: SIMD3<Double>,
+                                 tolerance: Double) -> Int? {
+        let index = OCCTBridge.nearestFaceIndex(
+            of: handle.shape, toPointX: point.x, y: point.y, z: point.z,
+            tolerance: tolerance)
+        return index > 0 ? Int(index) : nil
+    }
+
     /// Each kernel edge's point halfway along its curve by arc length, keyed
     /// by the shared 1-based edge index. Degenerate edges, and any whose
     /// length the kernel cannot compute, are absent.
@@ -1033,6 +1043,67 @@ nonisolated enum OCCTKernel {
     /// Exact solid volume in mm³ (`BRepGProp`); 0 on failure.
     static func volume(_ handle: BRepHandle) -> Double {
         OCCTBridge.volume(of: handle.shape)
+    }
+
+    // MARK: Measure
+
+    /// Measure ▸ one piece of a shape (the whole shape, a face or an edge),
+    /// decoded from `OCCTBridge.measureGeometry` (20 doubles; layout there).
+    /// `onFace` lies on the face; `mid` is an edge's middle by arc length.
+    nonisolated enum MeasureGeometry: Equatable {
+        case solid(volume: Double, centroid: SIMD3<Double>)
+        case surface(MeasureSurface, area: Double, centroid: SIMD3<Double>, onFace: SIMD3<Double>)
+        case curve(MeasureCurve, length: Double, start: SIMD3<Double>, end: SIMD3<Double>, mid: SIMD3<Double>)
+    }
+
+    static func measureGeometry(_ handle: BRepHandle, kind: MeasureKernelPiece.Kind,
+                                index: Int) -> MeasureGeometry? {
+        guard let data = OCCTBridge.measureGeometry(of: handle.shape, kind: kind.rawValue, index: index)
+        else { return nil }
+        let v: [Double] = data.withUnsafeBytes { Array($0.bindMemory(to: Double.self)) }
+        guard v.count == 20 else { return nil }
+        func p(_ at: Int) -> SIMD3<Double> { SIMD3(v[at], v[at + 1], v[at + 2]) }
+        switch kind {
+        case .body:
+            return .solid(volume: v[1], centroid: p(2))
+        case .face:
+            let surface: MeasureSurface
+            switch Int(v[1]) {
+            case 0: surface = .plane(origin: p(6), normal: p(9))
+            case 1: surface = .cylinder(point: p(6), axis: p(9), radius: v[12])
+            case 2: surface = .cone(apex: p(6), axis: p(9), semiAngle: v[12], referenceRadius: v[13])
+            case 3: surface = .sphere(center: p(6), radius: v[12])
+            default: surface = .other
+            }
+            return .surface(surface, area: v[2], centroid: p(3), onFace: p(14))
+        case .edge:
+            let start = p(3), end = p(6)
+            let curve: MeasureCurve
+            switch Int(v[1]) {
+            case 0:
+                curve = .line(start, end)
+            case 1:
+                let center = p(9), axis = p(12), radius = v[15]
+                // Sweep from the chord and the length: L = r·θ.
+                let sweep = radius > 1e-12 ? min(v[2] / radius, 2 * .pi) : 0
+                curve = .circle(center: center, axis: axis, radius: radius, sweep: sweep)
+            default:
+                curve = .other
+            }
+            return .curve(curve, length: v[2], start: start, end: end, mid: p(16))
+        }
+    }
+
+    /// Measure ▸ exact minimum distance between two pieces already in the
+    /// same (world) frame.
+    static func minimumDistance(_ a: MeasureKernelPiece, _ b: MeasureKernelPiece) -> MeasureQuery.Span? {
+        guard let data = OCCTBridge.minimumDistance(
+            between: a.shape.shape, kind: a.kind.rawValue, index: a.index,
+            and: b.shape.shape, kind: b.kind.rawValue, index: b.index)
+        else { return nil }
+        let v: [Double] = data.withUnsafeBytes { Array($0.bindMemory(to: Double.self)) }
+        guard v.count == 7, v[0].isFinite else { return nil }
+        return MeasureQuery.Span(distance: v[0], a: SIMD3(v[1], v[2], v[3]), b: SIMD3(v[4], v[5], v[6]))
     }
 
     /// Tight bounds of the exact geometry in the body's own frame — no

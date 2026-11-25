@@ -77,8 +77,12 @@ nonisolated enum CatmullRomBezier {
                 out.append(.line(p1, p2))
                 continue
             }
-            let d1 = ((p1 - p0) / (t1 - t0) * (t2 - t1) + (p2 - p1) / (t2 - t1) * (t1 - t0)) / (t2 - t0)
-            let d2 = ((p2 - p1) / (t2 - t1) * (t3 - t2) + (p3 - p2) / (t3 - t2) * (t2 - t1)) / (t3 - t1)
+            // Split up so older Swift compilers can type-check it in time.
+            let s01: SIMD2<Double> = (p1 - p0) / (t1 - t0)
+            let s12: SIMD2<Double> = (p2 - p1) / (t2 - t1)
+            let s23: SIMD2<Double> = (p3 - p2) / (t3 - t2)
+            let d1: SIMD2<Double> = (s01 * (t2 - t1) + s12 * (t1 - t0)) / (t2 - t0)
+            let d2: SIMD2<Double> = (s12 * (t3 - t2) + s23 * (t2 - t1)) / (t3 - t1)
             let h = t2 - t1
             out.append(Span(p0: p1, p1: p1 + d1 * (h / 3), p2: p2 - d2 * (h / 3), p3: p2))
         }

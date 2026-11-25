@@ -247,8 +247,12 @@ nonisolated enum DrawingProjection {
         var kept: [DrawingSegment] = []
         let sorted = lines.sorted { simd_distance($0.a, $0.b) > simd_distance($1.a, $1.b) }
         for line in sorted {
-            let probes = [line.a, line.a + (line.b - line.a) * 0.25, (line.a + line.b) / 2,
-                          line.a + (line.b - line.a) * 0.75, line.b]
+            // Split up so older Swift compilers can type-check it in time.
+            let span: SIMD2<Double> = line.b - line.a
+            let quarter: SIMD2<Double> = line.a + span * 0.25
+            let middle: SIMD2<Double> = line.a + span * 0.5
+            let threeQuarters: SIMD2<Double> = line.a + span * 0.75
+            let probes: [SIMD2<Double>] = [line.a, quarter, middle, threeQuarters, line.b]
             let covered = probes.allSatisfy { p in
                 cover.contains { onSegment(p, $0) } || kept.contains { onSegment(p, $0) }
             }

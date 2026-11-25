@@ -234,6 +234,22 @@ both ways (the model-to-scan direction finds the lid), depth maps per view
 with the worst strip, and `review.png` to LOOK at — before calling a model
 done; a FAIL is not filmed.
 
+## Measuring what you built
+
+`measure` with `{"items": [...], "deltas": false}` returns the same
+readings the Measure panel shows. Items are `{"body": id}` (the whole
+body), `{"body": id, "face": n}` or `{"body": id, "edge": n}` (the kernel
+indices `faces` / `edges` list), `{"point": [x, y, z]}` and
+`{"sketch": id, "entity": id}`. One item reads its length, area or volume
+(several sum), radius and diameter when round; two read the angle,
+minimum distance, central distance (centres of circles and spheres, axes
+of cylinders, a body's centre of gravity) and parallel distance (concentric
+items: the radial difference); `deltas: true` adds the X/Y/Z components.
+Each row has `kind`, `value` in `mm` / `deg` / `mm2` / `mm3`, and `text`
+in the person's units. Use it to check a wall thickness (two parallel
+faces), a hole's diameter or the gap between two parts instead of
+reading it off a screenshot.
+
 ## Checking a model against a scan or a reference part
 
 `accuracy` with `{"reference": "<id>", "model": "<id>"}` measures how

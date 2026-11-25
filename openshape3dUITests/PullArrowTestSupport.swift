@@ -38,7 +38,7 @@ extension XCTestCase {
     /// The Look at Sketch button only exists while the camera is off-axis, so
     /// its absence means we are already head-on and there is nothing to do.
     func lookAtSketch(_ app: XCUIApplication, settle: UInt32 = 2) {
-        let button = app.buttons["Look at Sketch"]
+        let button = app.buttons["LookAtSketch"]
         if button.waitForExistence(timeout: 3), button.isHittable {
             button.tap()
         }
@@ -74,6 +74,16 @@ extension XCTestCase {
             _ = btn.waitForExistence(timeout: 2)
         }
         btn.tap()
+    }
+
+    /// Select a whole body by finger: in Select mode, where a double-tap
+    /// selects (outside it, a finger double-tap starts a sketch).
+    func selectBody(_ app: XCUIApplication, at point: XCUICoordinate) {
+        let select = app.buttons["SelectModeButton"]
+        select.tap()
+        point.doubleTap()
+        sleep(1)
+        select.tap()
     }
 
     /// Start a sketch by choosing a draw tool from the body-mode Sketch flyout.

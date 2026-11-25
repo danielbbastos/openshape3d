@@ -144,7 +144,11 @@ struct DrawingSheetView: View {
             let inset = 16.0
             k = min((canvas.width - inset * 2) / sheet.x, (canvas.height - inset * 2) / sheet.y)
             height = sheet.y * k
-            origin = CGPoint(x: (canvas.width - sheet.x * k) / 2, y: (canvas.height - height) / 2)
+            // Typed parts: older Swift compilers found `/ 2` ambiguous here.
+            let width: Double = sheet.x * k
+            let x: Double = (Double(canvas.width) - width) / 2
+            let y: Double = (Double(canvas.height) - height) / 2
+            origin = CGPoint(x: x, y: y)
         }
 
         func point(_ p: SIMD2<Double>) -> CGPoint {
