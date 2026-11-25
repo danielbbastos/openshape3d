@@ -10,6 +10,7 @@
 import Foundation
 import SwiftData
 import Observation
+import simd
 
 @MainActor
 @Observable
@@ -919,9 +920,12 @@ final class DocumentSession {
     /// takes a second or two to open") — so it runs detached on value copies,
     /// as the boolean CSG does, and only its error map comes back, and only
     /// if the document has not changed meanwhile (an edit's own rebuild has
-    /// fresher errors). The scratch memo is NOT adopted: its revision stamps
-    /// come from a scratch counter, not the document's, so the first live
-    /// rebuild still warms the memo itself.
+    /// fresher errors). Its memo is adopted too (`adoptLoadEvalResult`), so
+    /// the first feature edit or undo after opening reruns only what changed
+    /// instead of the whole history. Its revision stamps come from a scratch
+    /// counter started far above any the document mints, so they never
+    /// collide; adoption hands the document's own revisions to every body
+    /// the document holds.
     private func scheduleLoadEvalRefresh() {
         guard !document.features.nodes.isEmpty else {
             lastEvalErrors = [:]
@@ -935,22 +939,51 @@ final class DocumentSession {
         let naming = naming
         let generation = changeCount
         Task.detached(priority: .utility) { [weak self] in
-            var counter: UInt64 = 1
+            var counter = Self.scratchRevisionBase
             var scratch = EvalCache()
-            let errors = features.evaluate(
+            let result = features.evaluate(
                 sketches: sketches,
                 planes: planes,
                 naming: naming,
                 nextRevision: { counter &+= 1; return counter },
                 cache: &scratch
-            ).errors
-            await self?.adoptLoadEvalErrors(errors, key: key, generation: generation)
+            )
+            await self?.adoptLoadEvalResult(result.errors, memo: scratch, bodies: result.bodies,
+                                             key: key, generation: generation)
         }
+    }
+
+    /// Where a background replay's revisions start: far above anything the
+    /// document's own counter reaches, so a memo body that is never handed
+    /// the document's revision (an intermediate an in-place op re-puts) can
+    /// never share one with a real body and fool the GPU cache.
+    nonisolated static let scratchRevisionBase: UInt64 = 1 << 62
+
+    /// The open-time replay's memo may stand in for the one the first live
+    /// rebuild would build, but only when it describes the document as it
+    /// is: no live rebuild has warmed the memo since, every input a replay
+    /// reads is unchanged, and every body it produced matches the stored
+    /// one (same triangles and bounds). A document saved by an older build
+    /// whose stored meshes differ from what a replay makes keeps today's
+    /// behaviour: the first live rebuild replays everything and fixes them.
+    nonisolated static func replayMatchesDocument(_ replayed: [Body], _ live: [Body]) -> Bool {
+        let byID = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for body in replayed {
+            guard let doc = byID[body.id],
+                  doc.render.triangleCount == body.render.triangleCount,
+                  doc.render.positions.count == body.render.positions.count else { return false }
+            let a = doc.render.localAABB, b = body.render.localAABB
+            let tolerance: Float = 1e-3
+            guard simd_reduce_max(simd_abs(a.min - b.min)) <= tolerance,
+                  simd_reduce_max(simd_abs(a.max - b.max)) <= tolerance else { return false }
+        }
+        return true
     }
 
     /// The main-actor half of `scheduleLoadEvalRefresh`: keep the replay's
     /// errors only if no edit has happened since it was scheduled.
-    private func adoptLoadEvalErrors(_ errors: [FeatureID: FeatureError], key: UInt64?, generation: Int) {
+    private func adoptLoadEvalResult(_ errors: [FeatureID: FeatureError], memo: EvalCache, bodies: [Body],
+                                     key: UInt64?, generation: Int) {
         // An edit since may still leave everything a replay reads as it was
         // (a sketch line no feature uses): the errors are then still right,
         // and dropping them made the first undo replay the whole history.
@@ -960,6 +993,10 @@ final class DocumentSession {
         guard changeCount == generation || stillCurrent else { return }
         lastEvalErrors = errors
         lastEvalErrorsKey = key
+        guard stillCurrent, evalCache.entries.isEmpty,
+              Self.replayMatchesDocument(bodies, document.bodies) else { return }
+        evalCache = memo
+        adoptCachedBodies()
     }
 
     /// Recompute `lastEvalErrors` WITHOUT touching any body: replay the

@@ -9,6 +9,7 @@
 //
 
 import XCTest
+import Euclid
 import simd
 @testable import openshape3d
 
@@ -66,5 +67,27 @@ final class EvalInputsKeyTests: XCTestCase {
         XCTAssertNotEqual(base, key(suppressed, sketches()), "suppression")
 
         XCTAssertNotEqual(base, key(FeatureGraph(nodes: []), sketches()), "a deleted feature")
+    }
+
+    // MARK: The open-time memo is adopted only when it describes the document
+
+    func testAReplayMatchingTheStoredBodiesMayStandIn() {
+        let stored = Body(name: "Box", euclidMesh: .cube(size: 2), revision: 7)
+        var replayed = stored
+        replayed.meshRevision = DocumentSession.scratchRevisionBase + 1
+        XCTAssertTrue(DocumentSession.replayMatchesDocument([replayed], [stored]))
+    }
+
+    func testAReplayThatDiffersFromTheStoredBodiesIsNotAdopted() {
+        let stored = Body(name: "Box", euclidMesh: .cube(size: 2), revision: 7)
+        let bigger = Body(id: stored.id, name: "Box", euclidMesh: .cube(size: 3), revision: 8)
+        XCTAssertFalse(DocumentSession.replayMatchesDocument([bigger], [stored]), "other bounds")
+
+        let other = Body(name: "Other", euclidMesh: .cube(size: 2), revision: 9)
+        XCTAssertFalse(DocumentSession.replayMatchesDocument([other], [stored]), "a body the document lacks")
+    }
+
+    func testScratchRevisionsStayClearOfTheDocument() {
+        XCTAssertGreaterThan(DocumentSession.scratchRevisionBase, UInt64(1) << 40)
     }
 }

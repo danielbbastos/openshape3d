@@ -48,6 +48,17 @@ in the document showed the main thread in two other places:
   computed for (rebuild, load refresh, undo refresh), and an unchanged key
   skips the replay. The load-time refresh also keeps its result when an
   edit landed meanwhile but the key still matches. `EvalInputsKeyTests`.
+- **The first feature edit after opening** replayed the whole history too,
+  because the memo started empty. The open-time badge replay already builds
+  a full memo in the background; it is now adopted (`adoptLoadEvalResult`)
+  when no live rebuild warmed the memo first, the inputs key still matches,
+  and every replayed body matches the stored one (triangle count, vertex
+  count, bounds within 1e-3 mm; `replayMatchesDocument`) — a document
+  whose stored meshes differ still gets today's full first rebuild, which
+  repairs them. Its scratch revisions start at 2^62
+  (`scratchRevisionBase`) so a memo snapshot never shares a revision with a
+  real body. Simulator, 16-feature part (12 OCCT unions), reopened: first
+  new feature 2.4 s → 0.03 s.
 
 `SaveAndBoundsCacheTests` pins the first two. Not done: `save()` still runs on the
 main actor and encodes all sketches; the first save after opening a
