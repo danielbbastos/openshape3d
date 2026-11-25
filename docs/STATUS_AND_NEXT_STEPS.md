@@ -37,7 +37,19 @@ in the document showed the main thread in two other places:
   `AABBMemo` box replaced whenever `positions` is set; copies share it,
   `==` ignores it.
 
-`SaveAndBoundsCacheTests` pins both. Not done: `save()` still runs on the
+- **The error-badge replay after undo/redo** (`refreshEvalErrors`) was the
+  big one on a real model: 6.8 s on the Mac (Debug) for one undo. It ran the
+  whole graph against a COPY of the memo, and the memo is empty after
+  opening a document until the first live rebuild, so every undo re-ran
+  every feature through OCCT, even for a sketch line no feature reads.
+  `FeatureGraph.evalInputsKey` fingerprints what a replay reads (every node,
+  the rollback marker, the sketches and planes the nodes reference, as the
+  memo sees them); `lastEvalErrorsKey` remembers the key the badges were
+  computed for (rebuild, load refresh, undo refresh), and an unchanged key
+  skips the replay. The load-time refresh also keeps its result when an
+  edit landed meanwhile but the key still matches. `EvalInputsKeyTests`.
+
+`SaveAndBoundsCacheTests` pins the first two. Not done: `save()` still runs on the
 main actor and encodes all sketches; the first save after opening a
 document still encodes every body once.
 

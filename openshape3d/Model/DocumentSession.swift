@@ -39,6 +39,11 @@ final class DocumentSession {
     /// primitive changed since (`SavedGeometry.matches`).
     private var savedGeometry: [UUID: SavedGeometry] = [:]
     private(set) var lastEvalErrors: [FeatureID: FeatureError] = [:]
+    /// `FeatureGraph.evalInputsKey` of the state `lastEvalErrors` was
+    /// computed for; nil when unknown. Undo/redo skip the badge replay when
+    /// the key is unchanged: undoing a line in a sketch no feature reads
+    /// replayed the whole history (6.8 s on a real model in Debug).
+    private var lastEvalErrorsKey: UInt64?
 
     /// The face tables of the most recent APPLIED rebuild — the tables whose
     /// triangle indices are valid against the documents' CURRENT renders,
@@ -430,6 +435,8 @@ final class DocumentSession {
             title: title
         )
         lastEvalErrors = plan.errors
+        lastEvalErrorsKey = editedGraph.evalInputsKey(
+            sketches: sketches ?? document.sketches, planes: document.planes)
         lastFaceTables = plan.faceTables
         lastKernelNames = plan.kernelNames
 
@@ -918,9 +925,11 @@ final class DocumentSession {
     private func scheduleLoadEvalRefresh() {
         guard !document.features.nodes.isEmpty else {
             lastEvalErrors = [:]
+            lastEvalErrorsKey = nil
             return
         }
         let features = document.features
+        let key = features.evalInputsKey(sketches: document.sketches, planes: document.planes)
         let sketches = document.sketches
         let planes = document.planes
         let naming = naming
@@ -935,15 +944,22 @@ final class DocumentSession {
                 nextRevision: { counter &+= 1; return counter },
                 cache: &scratch
             ).errors
-            await self?.adoptLoadEvalErrors(errors, generation: generation)
+            await self?.adoptLoadEvalErrors(errors, key: key, generation: generation)
         }
     }
 
     /// The main-actor half of `scheduleLoadEvalRefresh`: keep the replay's
     /// errors only if no edit has happened since it was scheduled.
-    private func adoptLoadEvalErrors(_ errors: [FeatureID: FeatureError], generation: Int) {
-        guard changeCount == generation else { return }
+    private func adoptLoadEvalErrors(_ errors: [FeatureID: FeatureError], key: UInt64?, generation: Int) {
+        // An edit since may still leave everything a replay reads as it was
+        // (a sketch line no feature uses): the errors are then still right,
+        // and dropping them made the first undo replay the whole history.
+        let stillCurrent = key != nil
+            && key == document.features.evalInputsKey(sketches: document.sketches,
+                                                      planes: document.planes)
+        guard changeCount == generation || stillCurrent else { return }
         lastEvalErrors = errors
+        lastEvalErrorsKey = key
     }
 
     /// Recompute `lastEvalErrors` WITHOUT touching any body: replay the
@@ -955,8 +971,14 @@ final class DocumentSession {
     private func refreshEvalErrors() {
         guard !document.features.nodes.isEmpty else {
             lastEvalErrors = [:]
+            lastEvalErrorsKey = nil
             return
         }
+        // Nothing a replay reads has changed (a sketch line no feature uses,
+        // a rename, a material): the badges already describe this state.
+        let key = document.features.evalInputsKey(sketches: document.sketches,
+                                                  planes: document.planes)
+        if let key, key == lastEvalErrorsKey { return }
         var counter: UInt64 = 1
         // Against a COPY of the memo: as fast as a live rebuild for unchanged
         // nodes, and still incapable of mutating the document or the memo.
@@ -969,6 +991,7 @@ final class DocumentSession {
             cache: &scratch
         )
         lastEvalErrors = result.errors
+        lastEvalErrorsKey = key
     }
 
     private func scheduleAutosave() {
