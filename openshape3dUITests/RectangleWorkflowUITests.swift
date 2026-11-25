@@ -16,7 +16,7 @@ final class RectangleWorkflowUITests: XCTestCase {
         p(app, 0.8, 0.78).tap()
         XCTAssertTrue(app.staticTexts["Sketching on ground plane"].waitForExistence(timeout: 3))
         sleep(2) // automatic camera flight after choosing the plane
-        XCTAssertFalse(app.buttons["Look at Sketch"].exists,
+        XCTAssertFalse(app.buttons["LookAtSketch"].exists,
                        "Sketch entry should align the camera without a second action")
         return app
     }

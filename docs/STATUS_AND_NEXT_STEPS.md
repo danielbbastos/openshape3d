@@ -19,6 +19,245 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-24, Measure: all of spec §16.3
+
+Measure rebuilt to the whole of spec §16.3 (now ✅):
+
+- **Panel** (`UI/MeasurePanel.swift`) replaces the status pill: draggable
+  (position kept), Measure menu, Include X, Y, Z Deltas
+  (`AppSettings.measureDeltas`, off), Pin to Always Show / Pinned. Opens on
+  **Object Measurements**; the point UI tests pick their type first.
+- **Engine** (`Kernel/MeasureQuery.swift`, `MeasureItems.swift`): picks →
+  world-space `MeasureItem`s → rows. Exact via two new bridge calls,
+  `measureGeometry` (face / edge kind, area, length, centre of gravity) and
+  `minimumDistance` (`BRepExtrema_DistShapeShape`), plus
+  `nearestFaceIndex` (tap → kernel face). The B-rep is moved to world space
+  first; `MeasureQueryTests.testAMovedBodyKeepsItsFaceNumbering` pins that a
+  transform keeps the kernel numbering.
+- **Notable points** (`Kernel/MeasureNotablePoints.swift`): kernel corners,
+  edge middles, circle centres (cached per body revision and placement),
+  face centre under the pointer; drawn as hints; placed points drag.
+- **Pins**: any row (`PinnedMeasurement.kind == .row`, optional fields, old
+  documents decode). An app older than this reads a document with a row
+  pin as having no pins (the array fails to decode as a whole).
+- **Info bar** uses the same rows (memoised per selection, since a minimum
+  distance is a kernel call). Two selected bodies add Minimum / Central
+  distance after Selected / Bounds (`SelectionUXTests` updated).
+- **Agent**: command `view.measure`; MCP op `measure` → `POST /v1/measure`
+  (`AgentMeasureItem`), documented in the model-openshape3d skill.
+
+**Follow-up the same mission (2026-11-25):** Shift-click a second face for
+a quick face-to-face reading in the info bar (`handleQuickFaceMeasure`,
+before Shift's extend-selection path); pins re-measure their items
+(`PinSource`, `livePin`, cached per `session.changeCount`), finding a face
+or edge again by a point ON it in body coordinates — `measureGeometry` now
+returns 20 doubles, adding a point on the face nearest its centroid (an
+annulus's centroid is in its hole) and an edge's arc-length middle; rows
+carry `refs`, so highlighting tints the exact items; the phone sheet
+(`MeasurePanel(compact:)`). The notable-point picker now prefers the point
+nearer the eye when two lie equally close to the ray (a corner straight
+behind another used to win by list order). Tests in `SelectionUXTests`
+(quick distance, pins following a move and an undo, a point pin riding on
+its body) and `MeasureQueryTests` (row refs, a face's on-face anchor).
+Phone layout checked live on the iPhone 15 Pro simulator. Gotcha: inside a
+`ScrollView`, iOS 26's scroll edge effect faded the panel's first rows —
+the sheet only scrolls once its rows outgrow 40 % of the screen.
+
+**Known, not from this work:** `MeasureUITests.testFaceSelectionShowsAreaInInfoBar`
+and `testSeededBoxReportsExactGeometryValues` fail on this Mac's iPad
+(A16) iOS 26.0 simulator on `chore/xcode-26.0-build` too (main + build
+fixes): the idle face tap at (0.5, 0.35) selects no face there.
+
+## Mission log — 2026-11-21…23, sketch view: starting a sketch, flat view while sketching
+
+Checked against the reference documentation on sketch planes (intro and
+both "How to start a sketch" tabs). Its section on organizing sketches has
+NOT been seen.
+
+**Starting a sketch** (spec §2.3), from the article:
+- Sketch shows the three origin rectangles at once (the flyout beside them
+  picks a tool first); tap or double-tap one. They win the tap over a body,
+  being drawn over it (`sketchTarget`).
+- While they are up, the grid follows the rectangle under the pointer
+  (`hoveredSketchTile`; spec "grid auto-follows the hovered plane").
+- A finger double-tap on the grid, a planar face or a construction plane
+  starts a sketch there (`startSketchFromFingerDoubleTap`; off in Select
+  mode, where a double-tap selects the body). A mouse or Pencil double-click
+  still gives the plane view.
+- Pointer: hover + Space starts on what is under the pointer, rectangles
+  included while shown (the chosen tool is kept).
+- A cube face or named view chosen while the rectangles are up starts the
+  sketch on that plane.
+- Normal to Sketch (was "Look at Sketch") returns to the 2D normal view after
+  rotating; the button id is still `LookAtSketch`, and UI tests find it by id.
+
+Inferred, NOT confirmed against the reference: Sketch skips the rectangles while still
+head-on to a plane a view just defined; the grid fallback is that plane.
+
+**Flat view while sketching** (Settings ▸ Sketch View, both default ON):
+*Flat View While Sketching* switches to orthographic while a sketch is open
+and restores the previous projection when it closes; *Hide Model in Front of
+Sketch* clips the model on the camera's side of the sketch plane (the plane
+view's cut). Driven by `mode`'s `didSet` (`sketchViewChanged`), so every way
+in and out of a sketch is covered. Orbiting more than 10° off mid-sketch
+lifts the cut and the flat projection; Normal to Sketch brings them back,
+cutting toward wherever the camera now is (`sketchFlat`, our inference).
+
+**Same-plane sketches are NOT reused.** PARITY_SPEC §2.3 says continuing on
+the same plane right after edits the same sketch, but upstream chose
+otherwise on purpose (`beginSketch`: "geometric coincidence alone is not
+document identity", pinned by
+`SketchIdentityTests.testNewCoplanarEntryKeepsSeparateOwnershipAndUndo`).
+Left as is until the article's second section settles it.
+
+**Tests.** UI tests now select bodies with `selectBody` (Select mode), since
+a finger double-tap sketches. Known same tile-vs-body bug, not fixed: Section
+View, Split and Insert Image draw plane tiles over the model but let the
+body behind win the tap.
+
+**UI tests failing on untouched upstream 0bb77eb9** (iPad Air 11" M2, iOS
+26.0.1, Xcode 26.0.1), full run 2026-11-23 excluding LiveSend, BugReport,
+WebHandoff, SlicerExport, *Take*, VideoSimSetup: 32 failures — Blend
+ChamferTwoEdgesInOneFeature; Clipboard TutorialMode; ConstraintRail ×2;
+Dimension ×4 (several can't find SettingsButton); Drawing Sheets; FaceFlow
+×3; ImportPicker; Items PlaneRowSelects; KeyboardShortcuts Recorded;
+Material Steel; Measure ×2; ParityWalkthrough 03 and 07; Planes
+SketchOnFaceThenExtrude; SectionDisplay XRay; SelectionExtension ClickAdds;
+RectangleWorkflow GalleryReopened; SketchEdit EndpointDrag; Settings ×7.
+
+## Mission log — 2026-11-21…23, plane view: the cube, named views, a double-clicked face
+
+The reference documentation on sketch planes lists the cube and Views as ways
+to define a sketch plane; spec §7.2 says a cube face click "enters the 2D
+planar view (rotation arrows appear above the cube to spin the plane in 90°
+steps)" and a double-click resets to the default view.
+
+- **True plan views.** The turntable's fixed Y-up look-at degenerated at the
+  pole, so Top was clamped to 89° and still showed slanted slivers of every
+  tall wall. The view matrix now takes screen-up from the orbit angles
+  (`TurntableCamera.up`, equal to the old Y-up result off the pole) and
+  `elevationLimit` is 90°.
+- **Cube faces and named views** (`enterStandardPlaneView`): the origin
+  plane facing the eye becomes the sketch plane (`workPlane`, the grid moves
+  onto it) and the view turns orthographic and flat. Nothing is cut; the view
+  names a direction. Orbiting more than 10° off ends it and restores the
+  projection (`SketchPlaneNavigation.FlatTracker`). Edges, corners and
+  Isometric define no plane.
+- **Spin arrows.** While such a view is up, two arrows under the cube (the
+  spec says above; moved under on user review) turn
+  the picture 90° about the line of sight (`TurntableCamera.roll`,
+  `spinPlaneView`). Orbiting keeps the spin with drags mapped to the screen;
+  named views, cube snaps and head-on flights stand it upright again.
+- **Cube double-tap** resets to the default view (Views ▸ Isometric). It
+  used to fall through to the model.
+- **Double-click a planar face or a construction plane**: it becomes the
+  sketch plane and the camera turns head-on in a flat projection with the
+  part on the camera's side cut away, so the far side shows projected onto
+  the plane (`enterPlane`, `beginPlaneView(cut: true)`, caps filled like
+  Section View; `keptSide` / `sketchCut`, `SketchViewCutTests`). No cut when
+  nothing lies behind the plane. A curved face only selects.
+- **Views ▸ Reset View & Grid** (`view.resetViewAndGrid`): the home view,
+  the grid back on the ground, no plane defined.
+- The sketch-plane grid gets a small depth bias so it wins over the face it
+  lies on instead of flickering with it.
+
+Inferred, not confirmed against the reference: named views flatten and use the plane
+through the origin with no cut; the grid stays on the defined plane after
+orbiting. The spin arrows show for named views as well as cube faces.
+
+**Open:** hidden-line display in the flat view; the cube's right-click
+menu (Default View, Top View, Zoom to Fit); edge hits on the cube.
+
+## Mission log — 2026-11-21, Mirror: any selection, a picked plane, sketches, nothing selected
+
+**Bodies.** The palette Mirror works on any selection (was exactly one
+body), offers **Pick a Face or Plane…** (`EditorMode.pickingMirrorPlane`:
+world/construction plane tiles or any planar face, Cancel on the status
+pill) and a **Keep Originals** toggle (off = the sources are removed in the
+same undo step; the history node records `keepOriginal: false`). The tiles
+are drawn over the model, so a tap on one wins over a body behind it. The
+catalog's `transform.mirror` ("Mirror Bodies") was never routed; it now
+starts Mirror, so Command Search and MCP `commands` list it. The Section
+and Mirror status pills share one branch (`planePickPrompt`).
+
+**Sketch Mirror.** `mirrorSketchSelection` / `MirrorSketchEntitiesCommand`
+(mirror copies + live `.symmetric` links) had no UI. The sketch palette now
+has **Mirror**: select shapes, tap Mirror, tap any line to mirror across
+(`beginSketchMirror` / `completeSketchMirrorPick`; the tapped line is the
+axis even if it was in the selection; the copies end up selected; Cancel
+Mirror on the pill, or Undo, leaves). Clicking a corner selects a POINT; its
+entity now counts (`sketchMirrorSourceIDs`). Rectangles get no symmetric
+link (their corners re-sort); across a SLANTED line a rectangle now comes
+back as its four reflected sides (it used to be a wrong box built from two
+reflected corners).
+
+**Sketch shapes in 3D.** Clicking inside a closed shape in the model view
+picks the region (and opens Extrude). Transform ▸ Mirror now takes that
+region (its `Profile.sourceEntityIDs`), or sketch lines picked with Select,
+and mirrors them in 3D across a face or plane like a body: the same menu,
+Pick a Face or Plane…, Keep Originals (`modelSketchMirrorTarget` /
+`mirrorSketchShapes`, geometry in `Kernel/SketchPlaneMirror.swift`,
+`SketchPlaneMirrorTests`). A mirror plane at right angles to the sketch puts
+the copy in the same sketch (mirrored across the line where the planes
+meet); any other plane makes a new sketch on the reflected plane.
+
+**Nothing selected**. The Mirror button is live with an empty
+selection: it asks "Choose a body or shape to mirror"
+(`EditorMode.pickingMirrorSource`), the tap picks the nearest body or closed
+sketch shape, then the "Choose a face or plane to mirror across" step
+mirrors it (`beginMirror` / `handleMirrorSourcePick`). With a selection the
+button still opens the Mirror menu. The pick takes the smallest thing under
+the tap: a sketch shape drawn on a body's face sits at the face's depth and
+wins the near-tie with the body, and it is outlined while the plane is
+chosen.
+
+**Verified** on the simulator: the Step's front face → "Step 2" at z 5…15,
+1800 mm³; Keep Originals off + YZ → one body, one Undo restores it; a 10×8
+rectangle at u 5…15 mirrored across the u = 0 line to −15…−5; a ground
+triangle → Transform ▸ Mirror ▸ YZ Plane → copy at −5…−15 in the same
+sketch; nothing selected: a rectangle on the step's top face, mirrored
+across the front face (z = 5) → copy at z 7…13, same sketch.
+
+**Open:** face-selection mirror (spec §5.6), the blue/purple Mirror badges,
+a UI test for each flow.
+
+## Mission log — 2026-11-23, quick viewport taps were dropped
+
+The single-tap recognizer required the double-tap recognizer to fail, and a
+tap that landed while it waited was dropped. Quick taps in different places
+(sketch points ~0.45 s apart) went missing.
+`SplineUITests.testClosedControlSplineIsAnExtrudableProfile` failed about 2
+runs in 5 that way: a three-point spline's curve passed within the pick
+tolerance of the centre, so the extrude tap selected the curve. Now one tap
+recognizer feeds `TapSequencer` (Interaction/), which delivers every tap and
+treats two taps within 0.35 s and 44 pt as a double-tap at the first point.
+A lone tap still waits out that window, as before. `TapSequencerTests`
+covers it; the spline test passed 8 of 8 afterwards.
+
+## Mission log — 2026-11-21, view commands with the window hidden
+
+`CameraAnimator` runs on a `CADisplayLink`, which does not fire while the
+app is in the background or its Mac window is covered: `view.top` over MCP
+reported success and left the camera where it was. A fallback lands the
+flight at its end pose if it has not finished `duration + 0.25 s` after it
+started; a counter keeps a late fallback from landing a superseded flight.
+
+## Mission log — 2026-11-21, building with Xcode 26.0.1
+
+Xcode 26.0.1 (Swift 6.2) fails to type-check several expressions that
+Xcode 26.6 accepts. They are split up here, with no behaviour change:
+`DrawingProjection` probes, `DrawingSheet` boxed-label corners,
+`CatmullRomBezier` tangents, `aimedConstraints` (explicit `Double`s; an
+`Angle` overload was picked), `DrawingSheetView` sheet layout,
+`SketchDimensionOverlay`'s label builder (now `labelLeaders` / `labelBadge` /
+`radiusLockBadge` / `valueButton` / `valueText` / `distanceTypeMenu`),
+`EditorView.viewportChrome` and `editorContent` (now staged modifier
+functions), and two test files (`SweepLoftTests`, `BlendImportTests`).
+Building there also needs
+`OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -solver-scope-threshold=50000000'`,
+Git LFS for `ThirdParty/OCCT.xcframework`, and, for tests on a 26.0
+simulator, `IPHONEOS_DEPLOYMENT_TARGET=26.0`.
+
 ## Open work — 2026-10-21, five UI tests fail before today's changes too
 
 The full UI suite (2026-10-21 evening, 216 passed) leaves five failing, and

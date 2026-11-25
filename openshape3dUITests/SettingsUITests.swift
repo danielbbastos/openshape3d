@@ -352,7 +352,7 @@ final class SettingsUITests: XCTestCase {
         p(0.45, 0.45).tap()
         XCTAssertTrue(app.staticTexts["Extrude"].waitForExistence(timeout: 5))
         typeExtrudeHeight(app); sleep(1)
-        p(0.5, 0.5).doubleTap(); sleep(1)
+        selectBody(app, at: p(0.5, 0.5))
     }
 
     func testUnitSwitchRelabelsInfoBarLive() throws {

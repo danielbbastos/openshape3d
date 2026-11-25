@@ -199,10 +199,13 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
            let pose = OrientationCube.hitPose(
                at: point, camera: renderer.camera, viewSize: view.bounds.size
            ) {
+            // A face defines the sketch plane and flattens, like a named view.
+            let eye = pose.position - pose.target
+            viewModel.enterStandardPlaneView(facing: SIMD3(Double(eye.x), Double(eye.y), Double(eye.z)))
             cameraAnimator?.animate(to: pose, duration: 0.4)
             return
         }
-        if viewModel.isPickingSymmetryAxis, let ray = ray(at: point) {
+        if viewModel.isPickingSymmetryAxis || viewModel.isPickingSketchMirrorAxis, let ray = ray(at: point) {
             viewModel.handle(.tap(ray: ray))
             sceneDidChange()
             return
@@ -341,8 +344,18 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             at: point, armed: viewModel.gizmoRepositionArmed, project: project)
     }
 
-    func gestureDoubleTapped(at point: CGPoint) {
+    func gestureDoubleTapped(at point: CGPoint, byFinger: Bool) {
+        // Double-tapping the orientation cube resets to the default view
+        // (spec §7.2), like Views ▸ Isometric; a single tap snaps to the face,
+        // edge or corner under it.
+        if let renderer, let view,
+           OrientationCube.hitPose(at: point, camera: renderer.camera, viewSize: view.bounds.size) != nil {
+            viewModel.applyStandardView(.isometric)
+            return
+        }
         guard let ray = ray(at: point) else { return }
+        viewModel.doubleTapFromFinger = byFinger
+        defer { viewModel.doubleTapFromFinger = false }
         viewModel.handle(.doubleTap(ray: ray))
     }
 
@@ -397,6 +410,9 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         return Double(dx * ux + dy * uy) * worldPerPoint
     }
 
+    /// A Measure point is being dragged to another notable point.
+    private var measurePointDragActive = false
+
     func gestureDragBegan(at point: CGPoint, isPencil: Bool) -> Bool {
         dragStartPoint = point
         pullActive = false
@@ -440,6 +456,13 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
                 viewModel.setGizmoPivot(world: world)
                 sceneDidChange()
             }
+            return true
+        }
+
+        // Measure: a drag that starts on a placed point moves it to another
+        // notable point (spec §16.3: placed points are movable).
+        if viewModel.beginMeasurePointDrag(ray: ray) {
+            measurePointDragActive = true
             return true
         }
 
@@ -499,6 +522,14 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
         // Choosing a section plane: taps pick, drags orbit.
         if case .pickingSectionPlane = viewModel.mode {
+            return false
+        }
+
+        // Choosing a mirror plane: the same.
+        if case .pickingMirrorPlane = viewModel.mode {
+            return false
+        }
+        if case .pickingMirrorSource = viewModel.mode {
             return false
         }
 
@@ -629,6 +660,10 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
     func gestureDragChanged(at point: CGPoint) {
         if numericEditorBlockedCubeDrag { return }
+        if measurePointDragActive {
+            if let ray = ray(at: point), viewModel.moveMeasurePointDrag(ray: ray) { sceneDidChange() }
+            return
+        }
         if pivotDragActive {
             if pivotDragOnSurface {
                 if let ray = ray(at: point), let world = gizmoPlacement(at: point, ray: ray) {
@@ -732,6 +767,12 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             numericEditorBlockedCubeDrag = false
             return
         }
+        if measurePointDragActive {
+            measurePointDragActive = false
+            viewModel.endMeasurePointDrag()
+            sceneDidChange()
+            return
+        }
         if pivotDragActive {
             pivotDragActive = false
             sceneDidChange()
@@ -820,7 +861,9 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         var hoverRay: Ray?
         if let point { hoverRay = ray(at: point) }
         viewModel.hoverRay = hoverRay
-        if viewModel.updateLinePreview(ray: hoverRay) {
+        let gridMoved = viewModel.updateHoveredSketchTile(ray: hoverRay)
+        let measureHintsMoved = viewModel.updateMeasureHover(ray: hoverRay)
+        if viewModel.updateLinePreview(ray: hoverRay) || gridMoved || measureHintsMoved {
             sceneDidChange()
         }
     }
@@ -940,8 +983,23 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         cameraAnimator?.animate(to: standard.applied(to: renderer.camera), duration: 0.4)
     }
 
+    /// The spin arrows under the cube: turn the picture about the line of
+    /// sight; positive is counter-clockwise.
+    func spinView(degrees: Double) {
+        guard let renderer else { return }
+        var target = renderer.camera
+        // From where a running spin is headed, so quick taps add up.
+        target.roll = (spinTarget ?? target.roll) + Float(degrees * .pi / 180)
+        spinTarget = target.roll
+        cameraAnimator?.animate(to: target, duration: 0.3)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            if self?.spinTarget == target.roll { self?.spinTarget = nil }
+        }
+    }
+    private var spinTarget: Float?
+
     /// View ▸ Rotate View: turn the turntable by these angles. Elevation
-    /// stays inside the turntable's ±89° (its fixed Y-up degenerates at 90°).
+    /// stays inside the turntable's ±90°.
     func rotateView(yawDegrees: Double, pitchDegrees: Double) {
         guard let renderer else { return }
         var target = renderer.camera
@@ -999,16 +1057,31 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         return Double(acos(alignment)) * 180 / .pi
     }
 
-    /// Show Look-at-Sketch while sketching with the camera >10° off head-on.
+    /// Degrees between the eye-line and `direction`, signed by side: 180 from
+    /// straight behind, where `offAngleDegrees(to:)` reads 0.
+    private func offAngleDegrees(facing direction: SIMD3<Double>) -> Double {
+        guard let renderer else { return 0 }
+        let offset = renderer.camera.position - renderer.camera.target
+        guard simd_length(offset) > 1e-6 else { return 0 }
+        let eye = simd_normalize(SIMD3(Double(offset.x), Double(offset.y), Double(offset.z)))
+        return acos(min(max(simd_dot(eye, direction), -1), 1)) * 180 / .pi
+    }
+
+    /// Show Normal to Sketch while sketching with the camera >10° off head-on.
     private func cameraDidMove() {
         let available: Bool
         if let plane = viewModel.activeSketch?.plane {
-            available = offAngleDegrees(to: plane) > EditorViewModel.lookAtSketchThresholdDegrees
+            let off = offAngleDegrees(to: plane)
+            available = off > EditorViewModel.lookAtSketchThresholdDegrees
+            viewModel.sketchCameraMoved(offAxisDegrees: off)
         } else {
             available = false
         }
         if viewModel.lookAtSketchAvailable != available {
             viewModel.lookAtSketchAvailable = available
+        }
+        if let planeView = viewModel.planeView {
+            viewModel.planeViewCameraMoved(offAxisDegrees: offAngleDegrees(facing: planeView.facing))
         }
         // Let SwiftUI overlays that reproject world points (dimension labels,
         // plan §C2) re-run their layout as the camera moves.
@@ -1017,9 +1090,15 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
 
     /// Degrees between the camera eye-line and `plane`'s normal — 0 head-on,
     /// 90 edge-on. Used by sketch entry to decide whether the current view is
-    /// usable to draw in, and by the Look at Sketch button's visibility.
+    /// usable to draw in, and by the Normal to Sketch button's visibility.
     func offAxisDegrees(to plane: SketchPlane) -> Double {
         offAngleDegrees(to: plane)
+    }
+
+    var cameraEyePosition: SIMD3<Double>? {
+        guard let renderer else { return nil }
+        let eye = renderer.camera.position
+        return SIMD3(Double(eye.x), Double(eye.y), Double(eye.z))
     }
 
     func orientationCubeLabels() -> [OrientationCube.FaceLabel] {
@@ -1055,15 +1134,18 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         if !fromFront, simd_dot(normal, renderer.camera.position - originF) < 0 {
             normal = -normal
         }
-        // Turntable angles that put the eye along the plane normal; vertical
-        // planes clamp at the elevation limit (top/bottom-down views).
+        // Turntable angles that put the eye along the plane normal.
         target.elevation = min(
             max(asin(min(max(normal.y, -1), 1)), -TurntableCamera.elevationLimit),
             TurntableCamera.elevationLimit
         )
-        target.azimuth = (abs(normal.x) + abs(normal.z)) > 1e-5 ? atan2(normal.x, normal.z) : 0
+        // A horizontal plane keeps the current heading squared to a
+        // quadrant: looking straight down, the azimuth is the screen roll.
+        target.azimuth = (abs(normal.x) + abs(normal.z)) > 1e-5
+            ? atan2(normal.x, normal.z) : StandardView.nearestQuadrant(renderer.camera.azimuth)
         target.target = originF
         target.distance = max(renderer.camera.distance, 14)
+        target.roll = 0
         cameraAnimator?.animate(to: target, duration: 0.4)
     }
 }

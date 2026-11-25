@@ -422,6 +422,7 @@ struct EditorView: View {
 
     private func sketchStatusText(_ viewModel: EditorViewModel) -> String {
         if viewModel.isPickingSymmetryAxis { return "Select a line for the axis of symmetry" }
+        if viewModel.isPickingSketchMirrorAxis { return "Tap a line to mirror across" }
         guard let sketch = viewModel.activeSketch else { return "Sketching" }
         if case .sketching(_, let tool) = viewModel.mode {
             switch tool {
@@ -458,74 +459,6 @@ struct EditorView: View {
     }
 
     /// Measure tool pill: prompts for picks, then shows distance + deltas.
-    private func measurePill(_ viewModel: EditorViewModel) -> some View {
-        HStack(spacing: 12) {
-            Menu {
-                ForEach(EditorViewModel.MeasureType.allCases, id: \.self) { type in
-                    Button(type.title) { viewModel.measureType = type }
-                        .accessibilityIdentifier("MeasureType-" + type.rawValue)
-                }
-            } label: {
-                Image(systemName: viewModel.measureType == .pointToPoint ? "ruler" : "angle")
-            }
-            .accessibilityIdentifier("MeasureTypeMenu")
-            if let result = viewModel.measureResult, viewModel.measureType == .pointToPoint {
-                Text(EditorViewModel.formattedLength(result.distance))
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("MeasureDistanceValue")
-                Text(String(
-                    format: "ΔX %.2f  ΔY %.2f  ΔZ %.2f",
-                    settings.unit.display(fromMM: result.deltas.x),
-                    settings.unit.display(fromMM: result.deltas.y),
-                    settings.unit.display(fromMM: result.deltas.z)
-                ))
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            } else if let angle = viewModel.measureAngle {
-                Text(EditorViewModel.formattedAngle(angle))
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("MeasureAngleValue")
-            } else {
-                Text(measurePrompt(viewModel))
-                    .font(.subheadline)
-                    .accessibilityIdentifier("MeasurePrompt")
-            }
-            if viewModel.measurementToPin != nil {
-                Button {
-                    viewModel.pinCurrentMeasurement()
-                } label: {
-                    Label("Pin", systemImage: "pin")
-                }
-                .controlSize(.small)
-                .accessibilityIdentifier("PinMeasurement")
-            }
-            Button("Done") {
-                viewModel.exitMeasure()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .keyboardShortcut(.cancelAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
-        .padding(.top, 8)
-    }
-
-    private func measurePrompt(_ viewModel: EditorViewModel) -> String {
-        let picked = viewModel.measurePoints.count
-        switch viewModel.measureType {
-        case .pointToPoint:
-            return picked == 0 ? "Tap two points to measure" : "Tap the second point"
-        case .threePointAngle:
-            return ["Tap the first arm's point", "Tap the corner", "Tap the second arm's point"][min(picked, 2)]
-        }
-    }
-
     /// Chamfer/Fillet bar (Phase E, spec §4.3): shows the pick prompt, the
     /// size field (setback/radius), and Apply/Cancel.
     private func blendBar(_ kind: BlendKind, _ viewModel: EditorViewModel) -> some View {
@@ -1262,7 +1195,9 @@ struct EditorView: View {
     private func viewportChrome(_ viewModel: EditorViewModel) -> some View {
         // On a phone the palette covers a sixth of the width: Zoom to Fit
         // frames, and the view centres, in the strip it leaves visible.
-        ViewportView(viewModel: viewModel,
+        // Built in stages: as one modifier chain this view was too large
+        // for older Swift compilers to type-check in reasonable time.
+        let base = ViewportView(viewModel: viewModel,
                      paletteFrame: horizontalSizeClass == .compact ? paletteFrame : nil,
                      paletteOnRight: settings.paletteOnRight)
             .ignoresSafeArea()
@@ -1321,6 +1256,7 @@ struct EditorView: View {
                 // chip while drawing.
                 ZStack {
                     OrientationCubeLabels(viewModel: viewModel)
+                    OrientationCubeSpinArrows(viewModel: viewModel)
                     MoveGizmoOverlay(viewModel: viewModel)
                     SnapChipOverlay(viewModel: viewModel)
                 }
@@ -1395,6 +1331,13 @@ struct EditorView: View {
                 bottomBarHeight = height
             }
             .onChange(of: viewModel.itemsRevealRequest) { _, _ in showItemsPanel = true }
+        return chromeToolbarStage(chromeTopStage(chromeBottomStage(
+            chromeSideStage(base, viewModel), viewModel), viewModel), viewModel)
+    }
+
+    /// Side panels and the deviation key over the viewport.
+    private func chromeSideStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay(alignment: .topTrailing) {
                 // The deviation preview's key, where the Items panel sits
                 // (the viewport's top edge survives a 16:9 crop of a recording).
@@ -1469,6 +1412,11 @@ struct EditorView: View {
                         .padding(.bottom, 8)
                 }
             }
+    }
+
+    /// Bottom-trailing badges and controls over the viewport.
+    private func chromeBottomStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay(alignment: .bottomTrailing) {
                 // Copy badge (spec §5.1): next gizmo drag moves a duplicate.
                 if viewModel.gizmoOrigin != nil {
@@ -1626,6 +1574,11 @@ struct EditorView: View {
                     .padding(.bottom, bottomBarInset)
                 }
             }
+    }
+
+    /// Status pills and notices along the top of the viewport.
+    private func chromeTopStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .overlay(alignment: .top) {
                 if let tool = viewModel.pendingCreateTool {
                     // Modify group armed (pick the operation, then the region).
@@ -1709,15 +1662,15 @@ struct EditorView: View {
                             sketchStateChip(viewModel)
                             // Shown when the camera drifted >10° off head-on.
                             if viewModel.lookAtSketchAvailable {
-                                Button("Look at Sketch") {
+                                Button("Normal to Sketch") {
                                     viewModel.lookAtSketch()
                                 }
                                 .controlSize(.small)
                                 .accessibilityIdentifier("LookAtSketch")
                             }
-                            if viewModel.isPickingSymmetryAxis {
-                                Button("Cancel Symmetry") { viewModel.cancelSymmetryAxisPick() }
-                                    .accessibilityIdentifier("CancelSymmetry")
+                            if let cancel = viewModel.sketchAxisPickCancel {
+                                Button(cancel.title) { viewModel.cancelSketchAxisPick() }
+                                    .accessibilityIdentifier(cancel.id)
                             }
                             Button("Exit Sketching") {
                                 viewModel.finishSketch()
@@ -1737,13 +1690,11 @@ struct EditorView: View {
                         .controlSize(.small)
                         .keyboardShortcut(.cancelAction)
                     }
-                } else if case .pickingSectionPlane = viewModel.mode {
-                    statusPill(
-                        icon: "square.split.diagonal.2x2",
-                        text: "Choose a section plane"
-                    ) {
+                } else if let prompt = viewModel.planePickPrompt {
+                    // Section View and Mirror both wait for a plane here.
+                    statusPill(icon: prompt.icon, text: prompt.text) {
                         Button("Cancel") {
-                            viewModel.cancelSectionPlanePick()
+                            viewModel.cancelPlanePickPrompt()
                         }
                         .controlSize(.small)
                         .keyboardShortcut(.cancelAction)
@@ -1927,8 +1878,6 @@ struct EditorView: View {
                         .controlSize(.small)
                         .keyboardShortcut(.cancelAction)
                     }
-                } else if case .measuring = viewModel.mode {
-                    measurePill(viewModel)
                 } else if case .faceSelected = viewModel.mode {
                     statusPill(
                         icon: viewModel.notice != nil
@@ -1970,6 +1919,19 @@ struct EditorView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: viewModel.notice)
+    }
+
+    /// Full-screen overlays, the toolbar and the sheets.
+    private func chromeToolbarStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
+            .overlay {
+                // Measure's panel stays up for the whole mode (spec §16.3).
+                if case .measuring = viewModel.mode {
+                    MeasurePanel(viewModel: viewModel,
+                                 compact: horizontalSizeClass == .compact,
+                                 bottomInset: bottomBarInset)
+                }
+            }
             .overlay {
                 if viewModel.isComputingBoolean {
                     VStack(spacing: 12) {
@@ -2033,6 +1995,8 @@ struct EditorView: View {
                                 viewModel.applyStandardView(standard)
                             }
                         }
+                        Button("Reset View & Grid") { viewModel.resetViewAndGrid() }
+                            .accessibilityIdentifier("ResetViewAndGrid")
                         Divider()
                         Toggle("Orthographic", isOn: Binding(
                             get: { viewModel.orthographicEnabled },
@@ -2333,9 +2297,9 @@ struct EditorView: View {
         viewModel.beginDecal(name: name.isEmpty ? "Decal" : name, image: prepared.image, aspect: prepared.aspect)
     }
 
-    @ViewBuilder
     private func editorContent(_ viewModel: EditorViewModel) -> some View {
-        viewportChrome(viewModel)
+        // In stages, for older Swift compilers (see `viewportChrome`).
+        let base = viewportChrome(viewModel)
             // ONE importer for every Import-menu entry (see `ImportRequest`).
             .fileImporter(
                 isPresented: $showImporter,
@@ -2446,6 +2410,12 @@ struct EditorView: View {
                     viewModel.errorMessage = "Export failed — please try again."
                 }
             }
+        return contentDialogStage(contentSheetStage(base, viewModel), viewModel)
+    }
+
+    /// Document sheets and exporters.
+    private func contentSheetStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .sheet(isPresented: Binding(
                 get: { arPreviewURL != nil },
                 set: { if !$0 { arPreviewURL = nil } }
@@ -2519,6 +2489,11 @@ struct EditorView: View {
                     viewModel.errorMessage = "Export failed — please try again."
                 }
             }
+    }
+
+    /// Dialogs, alerts and the save-error watcher.
+    private func contentDialogStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
+        content
             .confirmationDialog(
                 "Select Through",
                 isPresented: Binding(

@@ -295,4 +295,33 @@ final class SketchMirrorTests: XCTestCase {
                            "every emitted link addresses the line, not the re-sorted rect")
         }
     }
+
+    /// Across a slanted line a rectangle is a rotated rectangle: it comes back
+    /// as its four reflected sides (the old box from two corners was wrong).
+    func testRectMirroredAcrossSlantedLineBecomesFourReflectedSides() {
+        var document = DesignDocument()
+        let axisID = UUID(), rectID = UUID()
+        let sketch = Sketch(plane: .ground, entities: [
+            .line(id: axisID, a: SIMD2(0, 0), b: SIMD2(2, 1)),   // slope 1/2
+            .rect(id: rectID, min: SIMD2(1, 3), max: SIMD2(4, 5)),
+        ])
+        document.sketches.append(sketch)
+        guard let command = MirrorSketchEntitiesCommand(
+            sketchID: sketch.id, sourceEntityIDs: [rectID],
+            axisEntityID: axisID, sketch: sketch
+        ) else { return XCTFail("command should build") }
+
+        XCTAssertEqual(command.addedEntities.count, 4)
+        XCTAssertTrue(command.addedConstraints.isEmpty, "the sides are not linked")
+        let corners = [SIMD2<Double>(1, 3), SIMD2(4, 3), SIMD2(4, 5), SIMD2(1, 5)]
+        for (i, entity) in command.addedEntities.enumerated() {
+            guard case let .line(_, a, b) = entity else { return XCTFail("expected a line") }
+            assertClose(a, reflectPoint(corners[i], acrossA: SIMD2(0, 0), b: SIMD2(2, 1)))
+            assertClose(b, reflectPoint(corners[(i + 1) % 4], acrossA: SIMD2(0, 0), b: SIMD2(2, 1)))
+        }
+        // Reflection keeps side lengths: 3 and 2.
+        if case let .line(_, a, b) = command.addedEntities[0] {
+            XCTAssertEqual(simd_distance(a, b), 3, accuracy: 1e-9)
+        }
+    }
 }
