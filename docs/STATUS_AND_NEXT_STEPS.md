@@ -19,6 +19,18 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-25, Euclid 0.10.7 instead of the vendored copy
+
+Euclid is a package again (`XCRemoteSwiftPackageReference`, up to next
+minor from 0.10.7); `ThirdParty/Euclid` (0.8.18 + one patch, 17.6k lines)
+is gone. A standalone program using only Euclid reproduced the
+`makeWatertight` → `capPolygons` assertion on stock 0.8.18 and ran clean on
+0.10.6 and 0.10.7: since 0.9/0.10 `makeWatertight` removes overlapping
+slivers before capping, so the sliver holes never reach the fan fallback.
+That fallback still calls `Polygon(unchecked:)` (0.10.7 `Mesh.swift:508`);
+worth a one-line upstream report. No source changes were needed;
+`SubtractCrashTests` pass on 0.10.7 unpatched.
+
 ## Mission log — 2026-11-24, Measure: all of spec §16.3
 
 Measure rebuilt to the whole of spec §16.3 (now ✅):
@@ -267,8 +279,9 @@ A symmetric Extrude subtract died on a Euclid assertion (`makeWatertight` →
 - **A cut through several bodies always went to mesh CSG**, degrading solids
   and recording no history. Each body with history now gets its own node in
   one undo step; other solids are cut by `ExtrudeCutKit` (OCCT).
-- **The assertion**: Euclid 0.8.18 is vendored in `ThirdParty/Euclid` with a
-  one-line patch (its README; still needed at upstream 0.10.6). As that alone
+- **The assertion**: Euclid 0.8.18 was vendored in `ThirdParty/Euclid` with a
+  one-line patch (replaced 2026-11-25 by Euclid 0.10.7, which no longer
+  reaches it — see that mission log). As that alone
   could commit a torn mesh, Extrude and Combine refuse a mesh result opened
   wider than 1e-3 mm (`MeshSeamKit`). Do NOT use `isWatertight` for this:
   about half of ordinary cuts on Float-stored meshes fail it on 1e-7 cracks.
