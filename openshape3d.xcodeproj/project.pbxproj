@@ -732,8 +732,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/nicklockwood/Euclid";
 			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 0.10.7;
+				kind = exactVersion;
+				version = 0.10.5;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
