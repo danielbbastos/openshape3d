@@ -203,6 +203,36 @@ final class MeasureQueryTests: XCTestCase {
         XCTAssertLessThan(simd_length(gap.points[1] - SIMD3(5, 10, 50)), 1e-3, "\(gap.points)")
     }
 
+    /// Two plates: the outer faces pinned, then the inner faces. The inner
+    /// span is the same direction and inside the outer one, so it moves
+    /// sideways to a spot where the faces still face each other (reported:
+    /// the second pin covered the first). Same values.
+    func testASecondSpanBetweenTheSameWallsMovesAside() throws {
+        let left = try box(20, 20, 3)
+        let right = try box(20, 20, 3, at: SIMD3(0, 0, 30))
+        let outer = try XCTUnwrap(row(.parallelDistance, in: MeasureQuery.rows(
+            for: [try faceWithTriangles(left, normal: SIMD3(0, 0, -1), offset: 0),
+                  try faceWithTriangles(right, normal: SIMD3(0, 0, 1), offset: 33)], deltas: false)))
+        XCTAssertEqual(outer.value, 33, accuracy: 1e-6)
+
+        let innerItems = [try faceWithTriangles(left, normal: SIMD3(0, 0, 1), offset: 3),
+                          try faceWithTriangles(right, normal: SIMD3(0, 0, -1), offset: -30)]
+        let alone = try XCTUnwrap(row(.parallelDistance, in: MeasureQuery.rows(for: innerItems, deltas: false)))
+        let span = MeasureQuery.Span(distance: alone.value, a: alone.points[0], b: alone.points[1])
+        XCTAssertTrue(MeasureQuery.conflicts(span, with: [outer.points]), "centred, the two lie on one line")
+
+        let inner = try XCTUnwrap(row(.parallelDistance, in: MeasureQuery.rows(
+            for: innerItems, deltas: false, avoiding: [outer.points])))
+        XCTAssertEqual(inner.value, 27, accuracy: 1e-6)
+        let moved = MeasureQuery.Span(distance: inner.value, a: inner.points[0], b: inner.points[1])
+        XCTAssertFalse(MeasureQuery.conflicts(moved, with: [outer.points]), "\(inner.points)")
+        XCTAssertEqual(inner.points[0].z, 3, accuracy: 1e-6, "still from the inner face")
+        XCTAssertEqual(inner.points[1].z, 30, accuracy: 1e-6, "to the other inner face")
+        XCTAssertEqual(row(.minDistance, in: MeasureQuery.rows(for: innerItems, deltas: false,
+                                                              avoiding: [outer.points]))?.points ?? [], inner.points,
+                       "the minimum and parallel readings draw one line")
+    }
+
     func testTheGapBetweenParallelEdgesIsDrawnWhereTheyOverlap() {
         let a = MeasureItem.sketchEntity(.line(id: UUID(), a: SIMD2(0, 0), b: SIMD2(10, 0)),
                                          sketchID: SketchID(), plane: .ground)

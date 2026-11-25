@@ -98,4 +98,16 @@ final class PinnedMeasurementTests: XCTestCase {
         XCTAssertEqual(pins.first?.value ?? 0, 5, accuracy: 1e-12)
         XCTAssertNil(pins.first?.rowKind)
     }
+
+    /// Two labels at one spot: the second moves below the first.
+    func testPinnedLabelsAtOneSpotStack() throws {
+        let size = CGSize(width: 120, height: 24)
+        let spots = PinnedMeasurementsOverlay.layOut(anchors: [CGPoint(x: 100, y: 100), CGPoint(x: 110, y: 104), nil],
+                                                     sizes: [size, size, size])
+        let first = try XCTUnwrap(spots[0]), second = try XCTUnwrap(spots[1])
+        XCTAssertEqual(first, CGPoint(x: 100, y: 100))
+        XCTAssertGreaterThanOrEqual(second.y - first.y, size.height, "no overlap")
+        XCTAssertEqual(second.x, 110, "only moved down")
+        XCTAssertNil(spots[2])
+    }
 }

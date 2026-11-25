@@ -163,7 +163,12 @@ nonisolated enum MeasureQuery {
 
     /// The rows for these items, in the order the panel lists them.
     /// `deltas` adds the X/Y/Z components of every distance.
-    static func rows(for items: [MeasureItem], deltas: Bool) -> [MeasureRow] {
+    /// `avoiding`: spans already drawn (pinned readings), as end-point
+    /// pairs. A straight-across span between parallel faces or edges that
+    /// would lie on one of them is moved to another spot where the two
+    /// still face each other; its value does not change.
+    static func rows(for items: [MeasureItem], deltas: Bool,
+                     avoiding: [[SIMD3<Double>]] = []) -> [MeasureRow] {
         guard !items.isEmpty else { return [] }
         let all = items.map(\.ref)
         if items.count == 3, let pts = allPoints(items) {
@@ -171,7 +176,7 @@ nonisolated enum MeasureQuery {
             return [MeasureRow(kind: .angle, value: angle, points: pts, refs: all)]
         }
         if items.count == 2 {
-            return pairRows(items[0], items[1], deltas: deltas).map { row in
+            return pairRows(items[0], items[1], deltas: deltas, avoiding: avoiding).map { row in
                 var row = row
                 row.refs = all
                 return row
@@ -248,7 +253,8 @@ nonisolated enum MeasureQuery {
 
     // MARK: Two items
 
-    private static func pairRows(_ a: MeasureItem, _ b: MeasureItem, deltas: Bool) -> [MeasureRow] {
+    private static func pairRows(_ a: MeasureItem, _ b: MeasureItem, deltas: Bool,
+                                 avoiding: [[SIMD3<Double>]]) -> [MeasureRow] {
         // Two points: the plain point-to-point distance.
         if case .point(let p) = a.geometry, case .point(let q) = b.geometry {
             var rows = [MeasureRow(kind: .distance, value: simd_length(q - p), points: [p, q])]
@@ -267,7 +273,7 @@ nonisolated enum MeasureQuery {
             }
         }
 
-        let span = minimumSpan(a, b).map { centered($0, a, b) }
+        let span = minimumSpan(a, b).map { placed(centered($0, a, b), a, b, avoiding: avoiding) }
         if let span {
             rows.append(MeasureRow(kind: .minDistance, value: span.distance, points: [span.a, span.b]))
         }
@@ -275,8 +281,17 @@ nonisolated enum MeasureQuery {
             rows.append(MeasureRow(kind: .centralDistance, value: central.distance, points: [central.a, central.b]))
         }
         if let parallel = parallelSpan(a, b) {
-            // A radial difference has no single span to draw.
-            let drawn = parallel.a == parallel.b ? [] : [parallel.a, parallel.b]
+            // A radial difference has no single span to draw. Where the two
+            // face each other the shortest span IS a parallel one: draw the
+            // same (placed) line for both readings.
+            let drawn: [SIMD3<Double>]
+            if parallel.a == parallel.b {
+                drawn = []
+            } else if let span, abs(span.distance - parallel.distance) <= max(1e-6, parallel.distance * 1e-6) {
+                drawn = [span.a, span.b]
+            } else {
+                drawn = [parallel.a, parallel.b]
+            }
             rows.append(MeasureRow(kind: .parallelDistance, value: parallel.distance, points: drawn))
         }
         if deltas, let span { rows += deltaRows(span.a, span.b) }
@@ -479,6 +494,93 @@ nonisolated enum MeasureQuery {
     }
 
     // MARK: Minimum distance
+
+    /// How far apart two drawn spans must sit to read as two (mm): 8 % of
+    /// the span, at least 1 mm.
+    static func separation(for span: Span) -> Double { max(1, span.distance * 0.08) }
+
+    /// True when the span would lie on (or right beside) one of `others`:
+    /// parallel, overlapping along its length, closer than `separation`.
+    static func conflicts(_ span: Span, with others: [[SIMD3<Double>]]) -> Bool {
+        let d = span.b - span.a
+        let length = simd_length(d)
+        guard length > lengthEpsilon else { return false }
+        let u = d / length
+        let gap = separation(for: span)
+        for other in others where other.count == 2 {
+            let e = other[1] - other[0]
+            let le = simd_length(e)
+            guard le > lengthEpsilon, abs(simd_dot(u, e / le)) > 0.999 else { continue }
+            // Sideways distance between the two lines.
+            let w = other[0] - span.a
+            let lateral = simd_length(w - simd_dot(w, u) * u)
+            guard lateral < gap else { continue }
+            // Do they overlap along the line?
+            let t0 = simd_dot(other[0] - span.a, u), t1 = simd_dot(other[1] - span.a, u)
+            if max(t0, t1) > 0 + 1e-9, min(t0, t1) < length - 1e-9 { return true }
+        }
+        return false
+    }
+
+    /// A straight-across span that lies on one already drawn moves to
+    /// another spot where the two parallel faces (or edges) still face each
+    /// other, nearest the middle first. Deterministic, so a pin laid out
+    /// again after an edit lands in the same place. Unchanged when there is
+    /// no conflict, no other spot, or the items are not parallel flats.
+    static func placed(_ span: Span, _ a: MeasureItem, _ b: MeasureItem,
+                       avoiding others: [[SIMD3<Double>]]) -> Span {
+        guard !others.isEmpty, conflicts(span, with: others) else { return span }
+        switch (a.geometry, b.geometry) {
+        case (.surface(.plane, _, let ca), .surface(.plane(let ob, let nb), _, let cb)):
+            guard !a.triangles.isEmpty, !b.triangles.isEmpty, let da = direction(of: a),
+                  1 - abs(simd_dot(da, simd_normalize(nb))) < parallelTolerance else { return span }
+            let n = simd_normalize(nb)
+            let helper = abs(n.x) < 0.9 ? SIMD3<Double>(1, 0, 0) : SIMD3<Double>(0, 1, 0)
+            let u = simd_normalize(simd_cross(n, helper)), v = simd_cross(n, u)
+            // Face A's extent along u and v, about the middle.
+            let mid = (ca + cb) / 2
+            var lo = SIMD2<Double>(repeating: .infinity), hi = SIMD2<Double>(repeating: -.infinity)
+            for p in a.triangles {
+                let q = SIMD2(simd_dot(p - mid, u), simd_dot(p - mid, v))
+                lo = simd_min(lo, q); hi = simd_max(hi, q)
+            }
+            let tolerance = max(1e-4, span.distance * 1e-6)
+            let directions: [SIMD2<Double>] = [SIMD2(1, 0), SIMD2(-1, 0), SIMD2(0, 1), SIMD2(0, -1),
+                                               SIMD2(1, 1), SIMD2(-1, -1), SIMD2(1, -1), SIMD2(-1, 1)]
+            for step in [0.2, 0.35, 0.5, 0.65, 0.8, 0.95] {
+                for dir in directions {
+                    let reach = SIMD2(dir.x > 0 ? hi.x : -lo.x, dir.y > 0 ? hi.y : -lo.y)
+                    let seed = mid + u * (dir.x * reach.x * step) + v * (dir.y * reach.y * step)
+                    guard let onA = MeasureItem.closestOnTriangles(seed, a.triangles) else { continue }
+                    let onB = onA - simd_dot(onA - ob, n) * n
+                    guard let check = MeasureItem.closestOnTriangles(onB, b.triangles),
+                          simd_length(check - onB) <= tolerance,
+                          abs(simd_length(onB - onA) - span.distance) <= tolerance else { continue }
+                    let moved = Span(distance: span.distance, a: onA, b: onB)
+                    if !conflicts(moved, with: others) { return moved }
+                }
+            }
+            return span
+        case let (.curve(.line(p1, q1), _, _), .curve(.line(p2, q2), _, _)):
+            // Slide along the two edges' overlap.
+            let d = q1 - p1
+            let ll = simd_dot(d, d)
+            guard ll > 0 else { return span }
+            let t2 = simd_dot(p2 - p1, d) / ll, t3 = simd_dot(q2 - p1, d) / ll
+            let lo = max(0, min(t2, t3)), hi = min(1, max(t2, t3))
+            guard lo < hi else { return span }
+            for f in [0.3, 0.7, 0.15, 0.85, 0.05, 0.95] {
+                let onA = p1 + d * (lo + (hi - lo) * f)
+                let onB = closestOnSegment(onA, p2, q2)
+                guard abs(simd_length(onB - onA) - span.distance) <= max(1e-6, span.distance * 1e-6) else { continue }
+                let moved = Span(distance: span.distance, a: onA, b: onB)
+                if !conflicts(moved, with: others) { return moved }
+            }
+            return span
+        default:
+            return span
+        }
+    }
 
     /// Between two parallel faces or edges that overlap, every straight-
     /// across span is a shortest one, and the kernel hands back whichever it

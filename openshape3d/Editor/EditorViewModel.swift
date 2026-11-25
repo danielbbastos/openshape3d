@@ -17483,7 +17483,7 @@ final class EditorViewModel {
             }
             items = measurePoints.map { MeasureItem.point($0) }
         }
-        measureRows = MeasureQuery.rows(for: items, deltas: measureDeltas)
+        measureRows = MeasureQuery.rows(for: items, deltas: measureDeltas, avoiding: pinnedSpans)
         if let highlighted = highlightedMeasureRow, !measureRows.contains(where: { $0.kind == highlighted }) {
             highlightedMeasureRow = nil
         }
@@ -17591,21 +17591,36 @@ final class EditorViewModel {
         var items: [MeasureItem]
     }
 
+    /// Every pin as it reads now, laid out in the order they were pinned:
+    /// each one's span keeps clear of the spans before it (two readings
+    /// between the same pair of parallel walls no longer draw on one line).
     @ObservationIgnored
-    private var livePinCache: [UUID: (changeCount: Int, live: LivePin)] = [:]
+    private var livePinLayout: (changeCount: Int, pins: [UUID: LivePin])?
 
     func livePin(_ pin: PinnedMeasurement) -> LivePin {
         let count = session.changeCount
-        if let hit = livePinCache[pin.id], hit.changeCount == count, hit.live.pin.id == pin.id {
-            return hit.live
-        }
-        let live = measureAgain(pin) ?? LivePin(pin: pin, items: [])
-        if livePinCache.count > 512 { livePinCache.removeAll() }
-        livePinCache[pin.id] = (count, live)
-        return live
+        if livePinLayout?.changeCount != count { layOutPins() }
+        return livePinLayout?.pins[pin.id] ?? LivePin(pin: pin, items: [])
     }
 
-    private func measureAgain(_ pin: PinnedMeasurement) -> LivePin? {
+    private func layOutPins() {
+        var laidOut: [UUID: LivePin] = [:]
+        var drawn: [[SIMD3<Double>]] = []
+        for pin in session.document.pinnedMeasurements {
+            let live = measureAgain(pin, avoiding: drawn) ?? LivePin(pin: pin, items: [])
+            laidOut[pin.id] = live
+            if live.pin.points.count == 2 { drawn.append(live.pin.points) }
+        }
+        livePinLayout = (session.changeCount, laidOut)
+    }
+
+    /// The spans the pinned readings draw, for the current reading to keep
+    /// clear of.
+    private var pinnedSpans: [[SIMD3<Double>]] {
+        session.document.pinnedMeasurements.map { livePin($0).pin.points }.filter { $0.count == 2 }
+    }
+
+    private func measureAgain(_ pin: PinnedMeasurement, avoiding drawn: [[SIMD3<Double>]]) -> LivePin? {
         guard let sources = pin.sources, !sources.isEmpty else { return nil }
         var items: [MeasureItem] = []
         for source in sources {
@@ -17620,7 +17635,7 @@ final class EditorViewModel {
             live.points = points
         case .row:
             guard let kind = pin.rowKind.flatMap(MeasureRow.Kind.init(rawValue:)),
-                  let row = MeasureQuery.rows(for: items, deltas: true).first(where: { $0.kind == kind })
+                  let row = MeasureQuery.rows(for: items, deltas: true, avoiding: drawn).first(where: { $0.kind == kind })
             else { return nil }
             live.storedValue = row.value
             live.points = row.points
