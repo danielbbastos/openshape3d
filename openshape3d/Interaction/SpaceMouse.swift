@@ -260,6 +260,11 @@ final class SpaceMouseDriver {
     /// Read on every tick, so a settings change applies mid-move.
     @ObservationIgnored var settings: () -> SpaceMouseSettings = { AppSettings.shared.spaceMouse }
 
+    // An isolated deinit on a @MainActor @Observable class double-frees in
+    // the Swift 6.2 runtime when a test lets an instance go (STATUS gotcha 8,
+    // as `AppSettings`). Nothing to tear down here, so skip the actor hop.
+    nonisolated deinit {}
+
     var isMoving: Bool { !state.isAtRest }
 
     func receive(reportID: Int, payload: [UInt8]) {
