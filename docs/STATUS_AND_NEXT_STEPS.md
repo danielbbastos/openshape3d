@@ -21,8 +21,11 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 
 ## Mission log — 2026-11-25, Euclid 0.10.7 instead of the vendored copy
 
-Euclid is a package again (`XCRemoteSwiftPackageReference`, up to next
-minor from 0.10.7); `ThirdParty/Euclid` (0.8.18 + one patch, 17.6k lines)
+Euclid is a package again (`XCRemoteSwiftPackageReference`, **exactly
+0.10.5** — 0.10.6 and 0.10.7 fail to build for Mac Catalyst: `Euclid+ModelIO.swift`
+calls AppKit's `NSImage.cgImage(forProposedRect:…)` under `#if canImport(AppKit)`,
+which is true on Catalyst; 0.10.5 predates that code and already removes the
+slivers); `ThirdParty/Euclid` (0.8.18 + one patch, 17.6k lines)
 is gone. A standalone program using only Euclid reproduced the
 `makeWatertight` → `capPolygons` assertion on stock 0.8.18 and ran clean on
 0.10.6 and 0.10.7: since 0.9/0.10 `makeWatertight` removes overlapping
