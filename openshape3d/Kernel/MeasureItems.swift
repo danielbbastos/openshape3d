@@ -48,7 +48,7 @@ nonisolated extension MeasureItem {
                                kernel: MeasureKernelPiece(shape: shape, kind: .body, index: 0),
                                anchor: centroid)
         }
-        let centroid = meshCentroid(triangles)
+        let centroid = meshVolumeCentroid(triangles) ?? meshCentroid(triangles)
         return MeasureItem(ref: .body(body.id),
                            geometry: .solid(volume: MeasureKit.volume(of: body), centroid: centroid),
                            triangles: triangles, anchor: centroid)
@@ -204,6 +204,24 @@ nonisolated extension MeasureItem {
             total += area
         }
         return total > 0 ? sum / total : .zero
+    }
+
+    /// The centre of gravity of a closed mesh: signed tetrahedra from the
+    /// origin, each weighted by its volume (the surface centre is only the
+    /// same for symmetric parts). Nil when the mesh encloses no volume.
+    static func meshVolumeCentroid(_ triangles: [SIMD3<Double>]) -> SIMD3<Double>? {
+        guard let reference = triangles.first else { return nil }
+        var sum = SIMD3<Double>.zero, total = 0.0
+        for t in stride(from: 0, to: triangles.count - 2, by: 3) {
+            // Measured from a point on the mesh, not the world origin, so a
+            // part far from the origin keeps its precision.
+            let a = triangles[t] - reference, b = triangles[t + 1] - reference, c = triangles[t + 2] - reference
+            let v = simd_dot(a, simd_cross(b, c)) / 6
+            sum += (a + b + c) / 4 * v
+            total += v
+        }
+        guard abs(total) > 1e-9 else { return nil }
+        return reference + sum / total
     }
 
     /// A face from triangles alone: flat when every triangle shares one

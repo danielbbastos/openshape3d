@@ -138,6 +138,42 @@ final class MeasureQueryTests: XCTestCase {
 
     // MARK: Pairs
 
+    private func circle(_ center: SIMD2<Double>, _ radius: Double, segments: Int = 96) -> Profile {
+        let loop = (0..<segments).map { i -> SIMD2<Double> in
+            let a = Double(i) / Double(segments) * 2 * .pi
+            return center + SIMD2(cos(a), sin(a)) * radius
+        }
+        return Profile(loop: loop, kind: .circle(center: center, radius: radius), sourceEntityIDs: [UUID()])
+    }
+
+    /// A ring's centre of gravity is on its axis, half way up — the central
+    /// distance to a face beside it starts there, not in the wall
+    /// (reported: a hollow cylinder's central distance started in its wall).
+    func testAHollowCylindersCentreOfGravityIsOnItsAxis() throws {
+        let solid = try XCTUnwrap(OCCTKernel.extrudeSolid(
+            outer: circle(SIMD2(20, 0), 4.5), holes: [circle(SIMD2(20, 0), 2.5)], extras: [],
+            zMin: 0, zMax: 6, origin: .zero, xAxis: SIMD3(1, 0, 0), yAxis: SIMD3(0, 1, 0), normal: SIMD3(0, 0, 1)))
+        let ring = try body(solid)
+        guard case .solid(let volume, let centroid) = MeasureItem.body(ring).geometry else { return XCTFail("a solid") }
+        XCTAssertEqual(volume, .pi * (4.5 * 4.5 - 2.5 * 2.5) * 6, accuracy: 1e-6)
+        XCTAssertLessThan(simd_length(centroid - SIMD3(20, 0, 3)), 1e-6, "centre of gravity \(centroid)")
+    }
+
+    /// A mesh-only body's centre of gravity comes from its volume (signed
+    /// tetrahedra), not from its surface.
+    func testAMeshBodysCentreOfGravityIsItsVolumes() {
+        // Two unit cubes side by side along x, as triangles: a 2×1×1 bar
+        // whose centre is (1, 0.5, 0.5).
+        func cube(_ o: SIMD3<Double>) -> [SIMD3<Double>] {
+            let p = (0..<8).map { i in o + SIMD3(Double(i & 1), Double((i >> 1) & 1), Double((i >> 2) & 1)) }
+            let faces = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]
+            return faces.flatMap { f in [p[f[0]], p[f[1]], p[f[2]], p[f[0]], p[f[2]], p[f[3]]] }
+        }
+        let bar = cube(.zero) + cube(SIMD3(1, 0, 0))
+        let centre = MeasureItem.meshVolumeCentroid(bar)
+        XCTAssertLessThan(simd_length((centre ?? .zero) - SIMD3(1, 0.5, 0.5)), 1e-9, "\(String(describing: centre))")
+    }
+
     /// The picked face with its render triangles, as the viewport builds it:
     /// every triangle whose corners lie on the plane `n·p = d`.
     private func faceWithTriangles(_ body: Body, normal: SIMD3<Double>, offset: Double) throws -> MeasureItem {

@@ -48,9 +48,20 @@ struct MeasurePanel: View {
                     .offset(clamped(CGSize(width: savedX + drag.width, height: savedY + drag.height), in: proxy.size))
                     .frame(maxWidth: .infinity, alignment: .top)
                     .padding(.top, 8)
+                    .onAppear { areaSize = proxy.size }
+                    .onChange(of: proxy.size) { _, size in areaSize = size }
             }
         }
+        // The drag is measured here, in the area that does NOT move. Measured
+        // on the header, which moves with the card, each frame's offset fed
+        // back into the next translation and the card flickered between two
+        // places instead of following the pointer.
+        .coordinateSpace(name: Self.dragSpace)
     }
+
+    private static let dragSpace = "MeasurePanelArea"
+    /// The area the card moves in, to keep a dropped card on screen.
+    @State private var areaSize: CGSize = .zero
 
     /// The phone layout: grabber, header, and the readings in a scroll view
     /// no taller than 40 % of the screen, so the model stays in view.
@@ -225,11 +236,17 @@ struct MeasurePanel: View {
             .accessibilityIdentifier("CloseMeasure")
         }
         .contentShape(Rectangle())
-        .gesture(compact ? nil : DragGesture(minimumDistance: 4)
+        // High priority: the title is a Menu, which would otherwise take the
+        // start of a drag (and on iPad hand it to the back-swipe).
+        .highPriorityGesture(compact ? nil : DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.dragSpace))
             .updating($drag) { value, state, _ in state = value.translation }
             .onEnded { value in
-                savedX += value.translation.width
-                savedY += value.translation.height
+                // Keep what is on screen: an offset dragged past the edge
+                // would otherwise be stored and fight the next drag.
+                let dropped = clamped(CGSize(width: savedX + value.translation.width,
+                                             height: savedY + value.translation.height), in: areaSize)
+                savedX = dropped.width
+                savedY = dropped.height
             })
     }
 

@@ -4695,10 +4695,16 @@ static void OS3DPut(double *row, int at, const gp_XYZ &v) {
         double row[20] = {0};
         row[0] = (double)kind;
         if (kind == 0) {
-            GProp_GProps props;
-            BRepGProp::VolumePropertiesGK(piece, props, 1e-7, Standard_False, Standard_True);
-            row[1] = props.Mass();
-            OS3DPut(row, 2, props.CentreOfMass().XYZ());
+            // The volume from the Gauss–Kronrod rule (as `volumeOfShape`);
+            // the centre of gravity from the classic adaptive rule. GK's
+            // centre is off on seamed curved faces: a ring at x = 20 came
+            // back centred at x = 23.5 with its volume exact.
+            GProp_GProps gk;
+            BRepGProp::VolumePropertiesGK(piece, gk, 1e-7, Standard_False, Standard_True);
+            GProp_GProps classic;
+            BRepGProp::VolumeProperties(piece, classic, 1e-7, Standard_False);
+            row[1] = gk.Mass();
+            OS3DPut(row, 2, classic.CentreOfMass().XYZ());
         } else if (kind == 1) {
             const TopoDS_Face face = TopoDS::Face(piece);
             BRepAdaptor_Surface surf(face);
