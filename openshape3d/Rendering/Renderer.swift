@@ -283,7 +283,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         if drawGrid, scene.visualization == nil {
             encoder.setRenderPipelineState(pipelines.grid)
             encoder.setDepthStencilState(pipelines.depthReadOnly)
+            // A sketch plane's grid usually lies on a face: pull it toward
+            // the eye so it wins that surface instead of flickering with it.
+            // Clamped to the edge bias so it can't show through geometry.
+            let onSketchPlane = scene.gridPlane != nil
+            if onSketchPlane { encoder.setDepthBias(-4, slopeScale: -2, clamp: -1e-4) }
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            if onSketchPlane { encoder.setDepthBias(0, slopeScale: 0, clamp: 0) }
         }
 
         // 4a. Image quads (Insert Image): blended, depth read, no depth write.

@@ -343,4 +343,34 @@ final class AgentRouterTests: XCTestCase {
         XCTAssertEqual(AgentResponse.png(Data([0x89, 0x50])).contentType, "image/png")
         XCTAssertEqual(AgentResponse.ok([:]).contentType, "application/json")
     }
+
+    // MARK: /v1/measure
+
+    func testMeasureParsesEveryKindOfItem() {
+        let body = "11111111-1111-1111-1111-111111111111"
+        let sketch = "22222222-2222-2222-2222-222222222222"
+        let entity = "33333333-3333-3333-3333-333333333333"
+        let json = #"{"items":[{"body":"\#(body)"},{"body":"\#(body)","face":3},{"body":"\#(body)","edge":7},"#
+            + #"{"point":[1,2,3]},{"sketch":"\#(sketch)","entity":"\#(entity)"}],"deltas":true}"#
+        let route = AgentRouter.route(request("POST", "/v1/measure", body: json))
+        let id = UUID(uuidString: body)!
+        XCTAssertEqual(route, .measure(items: [
+            .body(id), .face(id, 3), .edge(id, 7), .point(SIMD3(1, 2, 3)),
+            .sketchEntity(sketch: UUID(uuidString: sketch)!, entity: UUID(uuidString: entity)!),
+        ], deltas: true))
+    }
+
+    func testMeasureRefusesAGetAndAnEmptyList() {
+        guard case .reply(405, _, _) = AgentRouter.route(request("GET", "/v1/measure")) else {
+            return XCTFail("GET is not how to measure")
+        }
+        guard case .reply(400, "bad_measure_items", _) = AgentRouter.route(request("POST", "/v1/measure", body: #"{"items":[]}"#)) else {
+            return XCTFail("an empty list is refused")
+        }
+        guard case .reply(400, "bad_measure_items", let message) =
+                AgentRouter.route(request("POST", "/v1/measure", body: #"{"items":[{"face":2}]}"#)) else {
+            return XCTFail("a face without its body is refused")
+        }
+        XCTAssertTrue(message.contains("items[0]"), message)
+    }
 }

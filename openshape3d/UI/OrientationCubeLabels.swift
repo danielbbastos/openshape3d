@@ -38,3 +38,38 @@ struct OrientationCubeLabels: View {
         .ignoresSafeArea()
     }
 }
+
+/// Spin arrows under the orientation cube while a cube face or named view is
+/// up (spec §7.2): each turns the plane 90° about the line of sight.
+struct OrientationCubeSpinArrows: View {
+    @Bindable var viewModel: EditorViewModel
+
+    var body: some View {
+        if viewModel.canSpinPlaneView {
+            GeometryReader { proxy in
+                let cube = OrientationCube.rect(in: proxy.size)
+                HStack(spacing: 18) {
+                    arrow("arrow.counterclockwise", "Spin View Left", "SpinViewLeft", clockwise: false)
+                    arrow("arrow.clockwise", "Spin View Right", "SpinViewRight", clockwise: true)
+                }
+                .position(x: cube.midX, y: cube.maxY + 16)
+            }
+            // Same frame as the Metal viewport (see `OrientationCubeLabels`).
+            .ignoresSafeArea()
+        }
+    }
+
+    private func arrow(_ icon: String, _ label: String, _ id: String, clockwise: Bool) -> some View {
+        Button {
+            viewModel.spinPlaneView(clockwise: clockwise)
+        } label: {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 30, height: 26)
+                .background(.thinMaterial, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(id)
+    }
+}

@@ -9,7 +9,7 @@
         "properties": {
           "op": {
             "type": "string",
-            "description": "Operation name: health, guide, state, faces, edges, sketches, check, screenshot, commands, or a change such as feature.extrude, command.run, document.export."
+            "description": "Operation name: health, guide, state, faces, edges, sketches, check, measure, screenshot, commands, or a change such as feature.extrude, command.run, document.export."
           },
           "args": {
             "type": "object",

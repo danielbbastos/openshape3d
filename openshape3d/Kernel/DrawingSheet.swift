@@ -839,9 +839,12 @@ nonisolated enum DrawingSheet {
                 out.texts.append(DrawingText(position: base + dir * (0.2 + pad), height: height, string: s,
                                              rotation: rotation))
                 let w = width(piece) - 0.4
-                let corners = [base + dir * 0.2 - up * pad, base + dir * (0.2 + w) - up * pad,
-                               base + dir * (0.2 + w) + up * (height + pad),
-                               base + dir * 0.2 + up * (height + pad)]
+                // Split up so older Swift compilers can type-check it in time.
+                let near: SIMD2<Double> = base + dir * 0.2
+                let far: SIMD2<Double> = base + dir * (0.2 + w)
+                let below: SIMD2<Double> = up * pad
+                let above: SIMD2<Double> = up * (height + pad)
+                let corners: [SIMD2<Double>] = [near - below, far - below, far + above, near + above]
                 for i in 0..<4 {
                     out.lines.append(DrawingLine(a: corners[i], b: corners[(i + 1) % 4], style: .thin))
                 }

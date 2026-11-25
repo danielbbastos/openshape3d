@@ -37,8 +37,7 @@ final class OrientationCubeLabelTests: XCTestCase {
     }
 
     func testTopViewNamesTop() {
-        // Top/Bottom clamp 1° short of a true plan view, so the named face is
-        // Top with a sliver of a side face possibly alongside it.
+        // Top/Bottom are true plan views.
         XCTAssertEqual(labels(.top).first?.name, "Top")
         XCTAssertEqual(labels(.bottom).first?.name, "Bottom")
     }

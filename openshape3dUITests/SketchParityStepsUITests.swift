@@ -49,7 +49,7 @@ final class SketchParityStepsUITests: XCTestCase {
         // is what made an earlier run look like a tolerance bug.
         lookAtSketch(app)
         lookAtSketch(app)
-        XCTAssertFalse(app.buttons["Look at Sketch"].exists,
+        XCTAssertFalse(app.buttons["LookAtSketch"].exists,
                        "the camera must be square on the sketch plane")
         return (app, window)
     }
