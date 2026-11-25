@@ -34,6 +34,10 @@ final class DocumentSession {
     /// and adopted to the document's bodies after each apply; the read-only
     /// replays (`refreshEvalErrors`, `inputBody`) use a discarded copy.
     private var evalCache = EvalCache()
+    /// The geometry each body's row last received from `save()` this
+    /// session, so an autosave encodes only bodies whose mesh, B-rep or
+    /// primitive changed since (`SavedGeometry.matches`).
+    private var savedGeometry: [UUID: SavedGeometry] = [:]
     private(set) var lastEvalErrors: [FeatureID: FeatureError] = [:]
 
     /// The face tables of the most recent APPLIED rebuild — the tables whose
@@ -865,6 +869,7 @@ final class DocumentSession {
         }
         document = loaded
         evalCache = EvalCache()   // a fresh memo for a freshly loaded document
+        savedGeometry = [:]   // rows hold what was loaded, not what this session wrote
         #if DEBUG
         OpenTiming.mark("\(loaded.features.nodes.count) features decoded, load done")
         #endif
@@ -999,10 +1004,29 @@ final class DocumentSession {
         for body in document.bodies {
             liveIDs.insert(body.id.raw)
             guard let transformData = try? JSONEncoder().encode(body.transform) else { continue }
-            let primitiveData = body.primitive.flatMap { try? JSONEncoder().encode($0) }
-            let meshData = MeshBlob.encode(body.render)
             let materialData = body.material.flatMap { try? JSONEncoder().encode($0) }
             let faceMaterialsData = body.faceMaterials.isEmpty ? nil : try? JSONEncoder().encode(body.faceMaterials)
+            // Geometry this session already wrote to the row is not encoded
+            // again: re-encoding every mesh and B-rep on every autosave held
+            // the main thread for seconds on a large model, after any edit
+            // at all — a sketch line, an undo.
+            if let persisted = persistedByID[body.id.raw],
+               savedGeometry[body.id.raw]?.matches(body) == true {
+                let id = body.id.raw
+                persisted.name = body.name
+                persisted.transformData = transformData
+                persisted.isHidden = body.isHidden
+                if !(materialData == nil && unreadableRows.bodyMaterial.contains(id)) {
+                    persisted.materialData = materialData
+                }
+                if !(faceMaterialsData == nil && unreadableRows.bodyFaceMaterials.contains(id)) {
+                    persisted.faceMaterialsData = faceMaterialsData
+                }
+                continue
+            }
+            let primitiveData = body.primitive.flatMap { try? JSONEncoder().encode($0) }
+            let meshData = MeshBlob.encode(body.render)
+            defer { savedGeometry[body.id.raw] = SavedGeometry(body) }
             // Analytic geometry, when this body has it — so roundness and boolean
             // composability survive a reload instead of degrading to triangles.
             let brepData = body.brep.flatMap { OCCTKernel.serialize($0) }
@@ -1289,5 +1313,24 @@ final class DocumentSession {
             // the editor can tell the user their work isn't reaching disk.
             lastSaveError = error.localizedDescription
         }
+    }
+}
+
+/// A body's geometry as `DocumentSession.save()` last wrote it. Holding the
+/// values costs nothing extra (the arrays share storage until the body
+/// changes), and comparing an unchanged mesh is a storage-identity check.
+nonisolated struct SavedGeometry {
+    let render: RenderMesh
+    let brep: BRepHandle?
+    let primitive: PrimitiveSpec?
+
+    init(_ body: Body) {
+        render = body.render
+        brep = body.brep
+        primitive = body.primitive
+    }
+
+    func matches(_ body: Body) -> Bool {
+        body.brep === brep && body.primitive == primitive && body.render == render
     }
 }
