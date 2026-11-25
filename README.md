@@ -333,8 +333,8 @@ no third-party deps) for device + simulator and assembles the xcframework.
 Takes a few minutes; you only do it once.
 
 Then open `openshape3d.xcodeproj` in Xcode 26+ and run the `openshape3d` scheme
-on an iPad (or iPhone) simulator or device. The Euclid package resolves
-automatically.
+on an iPad (or iPhone) simulator or device. Euclid is vendored with one
+patch (`ThirdParty/Euclid/README.md`); nothing to resolve.
 
 Sanity-check the kernel on a booted simulator any time with
 `scripts/run_occt_spike.sh` (builds a box and an extruded circle, and asserts

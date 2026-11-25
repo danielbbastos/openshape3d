@@ -258,6 +258,29 @@ Building there also needs
 Git LFS for `ThirdParty/OCCT.xcframework`, and, for tests on a 26.0
 simulator, `IPHONEOS_DEPLOYMENT_TARGET=26.0`.
 
+## Mission log — 2026-11-22, symmetric-subtract crash
+
+A symmetric Extrude subtract died on a Euclid assertion (`makeWatertight` →
+`capPolygons`, a zero-area fan triangle). Three faults, all fixed:
+
+- **Hidden bodies were tool targets**: `BooleanCandidacy.toolTargets`.
+- **A cut through several bodies always went to mesh CSG**, degrading solids
+  and recording no history. Each body with history now gets its own node in
+  one undo step; other solids are cut by `ExtrudeCutKit` (OCCT).
+- **The assertion**: Euclid 0.8.18 is vendored in `ThirdParty/Euclid` with a
+  one-line patch (its README; still needed at upstream 0.10.6). As that alone
+  could commit a torn mesh, Extrude and Combine refuse a mesh result opened
+  wider than 1e-3 mm (`MeshSeamKit`). Do NOT use `isWatertight` for this:
+  about half of ordinary cuts on Float-stored meshes fail it on 1e-7 cracks.
+
+Pinned by `SubtractCrashTests`. Verified on the iPad simulator: symmetric
+subtract over two solids with a hidden third → 1100 → 1010 mm³ each, still
+B-rep, hidden body untouched, one-step undo/redo.
+
+**Open:** revolve / sweep / loft cuts on solids without history still use
+mesh CSG; other `makeWatertight` callers (Split, Shell, Replace Face) no
+longer assert but don't check for openings.
+
 ## Open work — 2026-10-21, five UI tests fail before today's changes too
 
 The full UI suite (2026-10-21 evening, 216 passed) leaves five failing, and

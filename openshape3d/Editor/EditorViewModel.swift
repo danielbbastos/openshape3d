@@ -9079,7 +9079,13 @@ final class EditorViewModel {
                 self.reportFailure("The \(kind.rawValue) failed: \(error.message)")
                 return
             case nil:
-                break  // an operand is mesh-only — the mesh result stands
+                // An operand is mesh-only: the mesh result stands, unless it
+                // tore the body open.
+                let before = target.euclidMesh().transformed(by: target.transform.euclid)
+                if MeshSeamKit.boolean(composed.euclidMesh(), opened: before) {
+                    self.reportFailure(MeshSeamKit.refusalMessage(for: target.name))
+                    return
+                }
             }
             let boolean = BooleanCommand(
                 kind: kind,
@@ -9492,7 +9498,7 @@ final class EditorViewModel {
         }
         // Heavy imported meshes are scenery, never CSG operands
         // (`BooleanCandidacy`) — the scan that took Extrude down.
-        return session.document.bodies.filter(BooleanCandidacy.allows)
+        return BooleanCandidacy.toolTargets(in: session.document.bodies)
     }
 
     /// World-space AABB from the render mesh's local AABB (cheap — no Euclid
@@ -10095,14 +10101,37 @@ final class EditorViewModel {
                outputBodyIDs: [targets[0].target.id]) {
             session.recordAndRebuild([node], extra: hides, title: title)
             if session.lastEvalErrors[node.id] == nil {
-                finishToolCommit(selecting: targets[0].target.id)
-                return
+                if replayIsSound(targets[0]) {
+                    finishToolCommit(selecting: targets[0].target.id)
+                    return
+                }
+                session.undo()
+                errorMessage = MeshSeamKit.refusalMessage(for: targets[0].target.name)
+                return // the tool stays up
             }
             session.undo()
         }
 
-        var commands: [DocumentCommand] = []
+        // Work every target out before changing any: a refused cut changes
+        // nothing and leaves the tool up.
+        var replacements: [ReplaceBodyCommand] = []
         for entry in targets {
+            if kind == .subtract, case .extrude(let distance) = context.kind {
+                switch ExtrudeCutKit.cut(
+                    entry.target, outer: context.profile, holes: context.holes,
+                    extras: context.extraProfiles.map { (profile: $0.profile, holes: $0.holes) },
+                    plane: context.plane, distance: distance, symmetric: context.symmetric
+                ) {
+                case .cut(let after):
+                    replacements.append(ReplaceBodyCommand(title: title, before: entry.target, after: after))
+                    continue
+                case .failed(let message):
+                    errorMessage = message
+                    return // the tool stays up
+                case .declined:
+                    break // a mesh body: cut as a mesh, below
+                }
+            }
             let merged: Euclid.Mesh
             switch kind {
             case .union:
@@ -10119,6 +10148,10 @@ final class EditorViewModel {
                 cancelTool()
                 return
             }
+            guard !MeshSeamKit.boolean(merged, opened: entry.worldTarget) else {
+                errorMessage = MeshSeamKit.refusalMessage(for: entry.target.name)
+                return // the tool stays up
+            }
 
             // Preserve the pivot; rotation/scale bake into the mesh.
             let pivot = entry.target.transform.translation
@@ -10133,9 +10166,40 @@ final class EditorViewModel {
                 euclidMesh: localMesh,
                 revision: 0 // assigned by the command
             )
-            commands.append(ReplaceBodyCommand(title: title, before: entry.target, after: after))
+            replacements.append(ReplaceBodyCommand(title: title, before: entry.target, after: after))
         }
 
+        // A cut through several bodies: one history step for each body that
+        // has history, or the next rebuild would bring the uncut body back.
+        // Bodies without history are replaced in the same undo step.
+        if targets.count > 1 {
+            var nodes: [FeatureNode] = []
+            var unowned: [DocumentCommand] = []
+            for (entry, replacement) in zip(targets, replacements) {
+                if let owner = featureNode(owning: entry.target.id),
+                   let node = toolFeatureNode(
+                       context: context,
+                       boolean: BooleanIntent(
+                           op: kind.featureOp,
+                           resolvedTargets: [BodyRef(producer: owner.id, bodyID: entry.target.id)]),
+                       outputBodyIDs: [entry.target.id]) {
+                    nodes.append(node)
+                } else {
+                    unowned.append(replacement)
+                }
+            }
+            if !nodes.isEmpty {
+                session.recordAndRebuild(nodes, extra: unowned + hides, title: title)
+                let replayed = nodes.allSatisfy { session.lastEvalErrors[$0.id] == nil }
+                if replayed, targets.allSatisfy(replayIsSound) {
+                    finishToolCommit(selecting: targets[0].target.id)
+                    return
+                }
+                session.undo()
+            }
+        }
+
+        var commands: [DocumentCommand] = replacements
         // Shapr3D parity (spec §11): sketches auto-hide once a tool consumes
         // them into a body, in the same undo step.
         commands.append(contentsOf: hides)
@@ -10162,6 +10226,17 @@ final class EditorViewModel {
             session.perform(CompositeCommand(title: title, commands: commands))
         }
         finishToolCommit(selecting: targets[0].target.id)
+    }
+
+    /// A replayed cut left its body whole: a solid, or a mesh that wasn't
+    /// torn open (the evaluator's fallback when OCCT declines).
+    private func replayIsSound(
+        _ entry: (target: Body, worldTarget: Euclid.Mesh, pushesIn: Bool)
+    ) -> Bool {
+        guard let after = session.document.body(with: entry.target.id) else { return true }
+        if after.brep != nil { return true }
+        return !MeshSeamKit.boolean(
+            after.euclidMesh().transformed(by: after.transform.euclid), opened: entry.worldTarget)
     }
 
     /// The tool is down; its result is the selection.
