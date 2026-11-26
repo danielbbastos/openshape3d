@@ -558,6 +558,16 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
 /// tessellation segment's midpoint used to be whichever came first.
 + (nullable NSData *)edgeMidpointsOfShape:(OCCTShape *)shape;
 
+/// Every edge between two faces as line-list segments (6 floats each), taken
+/// from the face triangulation so each one lies on a render-mesh edge. Seams
+/// and degenerate edges are left out. With `remesh` (or when the shape has no
+/// triangulation) a mesh-free copy is tessellated with these deflections,
+/// leaving `shape` untouched. Nil when there are none or on failure.
++ (nullable NSData *)edgeSegmentsOfShape:(OCCTShape *)shape
+                       angularDeflection:(double)angularDeflection
+                        linearDeflection:(double)linearDeflection
+                                  remesh:(BOOL)remesh;
+
 /// The largest fillet radius the edges near `worldPoints` can actually
 /// take, found by bisection over REAL (fully checked) `BRepFilletAPI`
 /// builds — so the drag clamp and the commit agree by construction, unlike

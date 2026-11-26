@@ -912,6 +912,53 @@ final class DocumentSession {
         // because errors only existed after the first live rebuild (review
         // R4-N6). Surface them without holding the open: see below.
         scheduleLoadEvalRefresh()
+        scheduleLoadKernelEdges()
+    }
+
+    /// A reopened B-rep body has its stored mesh but no kernel edges (they
+    /// are not persisted, and the stored B-rep has no triangulation to read
+    /// them from), so until something rebuilt it, it drew and picked crease
+    /// edges: no fillet tangent edges, stray lines on curved faces. Read them
+    /// off a mesh-free copy, tessellated with the same settings, off the open
+    /// path; a body whose stored mesh the copy does not match keeps creases.
+    private func scheduleLoadKernelEdges() {
+        let pending = document.bodies.compactMap { body -> (BodyID, BRepHandle, RenderMesh)? in
+            guard let brep = body.brep, body.render.kernelEdgeSegments == nil else { return nil }
+            return (body.id, brep, body.render)
+        }
+        guard !pending.isEmpty else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            var found: [(BodyID, BRepHandle, [SIMD3<Float>])] = []
+            for (id, brep, render) in pending {
+                let segments = OCCTKernel.kernelEdgeSegments(from: brep, remesh: true)
+                if let matched = RenderMesh.matchingKernelEdges(segments, on: render) {
+                    found.append((id, brep, matched))
+                }
+            }
+            guard !found.isEmpty else { return }
+            await self?.adoptLoadKernelEdges(found)
+        }
+    }
+
+    /// The main-actor half of `scheduleLoadKernelEdges`: only bodies still
+    /// holding the same B-rep and a mesh the edges lie on. A new revision
+    /// makes the renderer upload the new lines; the eval memo is handed the
+    /// updated bodies so it still matches the document.
+    private func adoptLoadKernelEdges(_ found: [(BodyID, BRepHandle, [SIMD3<Float>])]) {
+        var changed = false
+        for (id, brep, segments) in found {
+            guard let i = document.bodies.firstIndex(where: { $0.id == id }),
+                  document.bodies[i].brep === brep,
+                  document.bodies[i].render.kernelEdgeSegments == nil,
+                  let matched = RenderMesh.matchingKernelEdges(segments, on: document.bodies[i].render)
+            else { continue }
+            document.bodies[i].render.kernelEdgeSegments = matched
+            document.bodies[i].edges = FeatureEdgeExtractor.edges(from: document.bodies[i].render)
+            document.bodies[i].meshRevision = document.nextRevision()
+            changed = true
+        }
+        guard changed else { return }
+        if !evalCache.entries.isEmpty { adoptCachedBodies() }
     }
 
     /// The load-time badge refresh, off the open path. It is the whole graph

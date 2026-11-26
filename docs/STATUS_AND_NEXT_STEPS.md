@@ -19,6 +19,37 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-26, B-rep edges instead of mesh creases
+
+Report: after a fillet, its edges could not be selected, and a long fillet
+along a curve showed zig-zag lines. Both came from one rule: drawn edges
+(`FeatureEdgeExtractor`) and pickable edges (`EdgeTopology.selectableEdges`)
+were the mesh edges where two triangles meet at more than 20°. A fillet
+meets its neighbours tangentially (0°), so its edges were neither; thin
+triangles on a curved fillet sometimes passed 20°, so stray lines showed.
+Live check: a 20×20×10 block with one 4 mm fillet had 15 kernel edges, 2
+with no line and no pick.
+
+- **`RenderMesh.kernelEdgeSegments`**: the B-rep's edges as a line list of
+  mesh vertex positions, read from each edge's polygon on its face
+  triangulation (`OCCTBridge edgeSegmentsOfShape:`), so every segment is a
+  mesh edge. Seams and degenerate edges are left out. Set in `adoptBRep`
+  when nearly every endpoint is a mesh vertex
+  (`RenderMesh.matchingKernelEdges`); cleared when `positions` is set. Not
+  persisted and not part of `==`.
+- **When present it decides** what is drawn (`FeatureEdgeExtractor`) and
+  picked (`selectableEdges`: kernel mesh edges, any angle). The select-mode
+  edge tap (`tapIsNearBodyEdge`) skips its 45° filter for such bodies; a
+  tap on a curved wall still means the wall. Mesh-only bodies keep the
+  crease rule.
+- **Reopened documents**: the stored B-rep has no triangulation, so
+  `DocumentSession.scheduleLoadKernelEdges` tessellates a mesh-free copy
+  off the open path and attaches the edges to bodies whose stored mesh they
+  match (new revision, so the renderer uploads them).
+- Tests: `KernelEdgeTests` (box keeps 12 edges, a fillet's 2 tangent edges
+  pick, a cylinder draws only its rims, off-mesh segments refused, a
+  reloaded B-rep finds the same edges).
+
 ## Mission log — 2026-11-25, undo stalls on a large model
 
 Report: face → Sketch → a line → Undo took seconds, with a busy cursor.

@@ -104,6 +104,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
@@ -3044,6 +3045,63 @@ static double OS3DSpanExactArea(const TopoDS_Face &face) {
         return found.empty() ? 0 : (NSInteger)*found.begin();
     } catch (...) {
         return 0;
+    }
+}
+
+// Every edge that bounds two faces, as the polyline its face triangulation
+// already uses: the same nodes, transformed and cast to float exactly as
+// TessellateShape writes render positions, so each segment lands on a mesh
+// edge. Seam edges (one face on both sides) and degenerate edges are left
+// out: they are artefacts of the parametrisation, not edges anyone sees.
+// An edge with no polygon on the triangulation is left out too.
+static std::vector<float> OS3DEdgeSegments(const TopoDS_Shape &shape) {
+    std::vector<float> out;
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    for (Standard_Integer e = 1; e <= edgeFaces.Extent(); ++e) {
+        const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(e));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        const TopTools_ListOfShape &faces = edgeFaces.FindFromIndex(e);
+        TopTools_IndexedMapOfShape distinct;
+        for (TopTools_ListIteratorOfListOfShape it(faces); it.More(); it.Next()) distinct.Add(it.Value());
+        if (distinct.Extent() < 2) continue;
+        const TopoDS_Face face = TopoDS::Face(distinct(1));
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull()) continue;
+        Handle(Poly_PolygonOnTriangulation) poly = BRep_Tool::PolygonOnTriangulation(edge, tri, loc);
+        if (poly.IsNull() || poly->NbNodes() < 2) continue;
+        const gp_Trsf trsf = loc.Transformation();
+        for (Standard_Integer i = 1; i < poly->NbNodes(); ++i) {
+            const gp_Pnt a = tri->Node(poly->Node(i)).Transformed(trsf);
+            const gp_Pnt b = tri->Node(poly->Node(i + 1)).Transformed(trsf);
+            out.push_back((float)a.X()); out.push_back((float)a.Y()); out.push_back((float)a.Z());
+            out.push_back((float)b.X()); out.push_back((float)b.Y()); out.push_back((float)b.Z());
+        }
+    }
+    return out;
+}
+
++ (nullable NSData *)edgeSegmentsOfShape:(OCCTShape *)shape
+                       angularDeflection:(double)angularDeflection
+                        linearDeflection:(double)linearDeflection
+                                  remesh:(BOOL)remesh {
+    if (shape == nil || shape->_shape.IsNull()) return nil;
+    try {
+        TopoDS_Shape target = shape->_shape;
+        if (remesh || !OS3DHasTriangulation(target)) {
+            // A copy without the mesh, tessellated here: the stored shape is
+            // never written to, so this may run off the main thread.
+            target = OS3DWithoutMesh(shape->_shape);
+            if (target.IsNull()) return nil;
+            OCCTRenderMesh *mesh = TessellateShape(target, linearDeflection, angularDeflection);
+            if (mesh.vertexCount == 0) return nil;
+        }
+        const std::vector<float> out = OS3DEdgeSegments(target);
+        if (out.empty()) return nil;
+        return [NSData dataWithBytes:out.data() length:out.size() * sizeof(float)];
+    } catch (...) {
+        return nil;
     }
 }
 

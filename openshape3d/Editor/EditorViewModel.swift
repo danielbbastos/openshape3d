@@ -6100,8 +6100,11 @@ final class EditorViewModel {
             return false
         }
         let flattest = cos(Self.edgeTapMinimumDihedralDegrees * .pi / 180)
+        // A B-rep body's edges are the kernel's, seams already left out, so
+        // every one counts — a fillet's tangent edge included.
+        let kernelEdges = body.render.kernelEdgeSegments != nil
         let sharp = EdgeTopology.selectableEdges(from: body.render).filter {
-            simd_dot($0.normalA, $0.normalB) <= flattest
+            kernelEdges || simd_dot($0.normalA, $0.normalB) <= flattest
         }
         guard !sharp.isEmpty else { return false }
         // Measured in WORLD units at the camera's current scale, never on

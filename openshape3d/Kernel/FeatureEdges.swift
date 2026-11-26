@@ -37,6 +37,9 @@ nonisolated enum FeatureEdgeExtractor {
 
     static func edges(from mesh: RenderMesh, angleThresholdDegrees: Float = 20) -> FeatureEdgeSet {
         guard mesh.triangleCount > 0 else { return FeatureEdgeSet(segments: []) }
+        // A B-rep body draws its own edges: tangent ones included, and no
+        // lines between the triangles of one curved face.
+        if let kernel = mesh.kernelEdgeSegments { return FeatureEdgeSet(segments: kernel) }
 
         // 1. Weld positions into topological vertex IDs (render vertices are
         //    split along hard edges, which would hide adjacency).
