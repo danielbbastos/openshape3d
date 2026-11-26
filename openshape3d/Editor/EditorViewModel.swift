@@ -5362,13 +5362,9 @@ final class EditorViewModel {
         // sharp again (and the next pick of it chooses its kind anew).
         if case .pickingBlendEdges = mode, let featureID = blendEditingFeature,
            blendValue <= 1e-6 {
-            let bodyID = blendBodyID
             resetBlendState()
             deleteFeature(featureID)
-            if let bodyID, session.document.body(with: bodyID) != nil {
-                mode = .selected(bodyID)
-                selection = [bodyID]
-            }
+            finishBlendWithNothingSelected()
             return
         }
         guard case .pickingBlendEdges(let kind) = mode,
@@ -5387,8 +5383,7 @@ final class EditorViewModel {
             resetBlendState()
             session.editFeature(featureID, to: after)
             session.save()
-            mode = .selected(bodyID)
-            selection = [bodyID]
+            finishBlendWithNothingSelected()
             return
         }
 
@@ -5429,9 +5424,16 @@ final class EditorViewModel {
         blendSelectedEdges = []
         blendBodyID = nil
         blendPreview = nil
-        mode = .selected(source.id)
-        selection = [source.id]
+        finishBlendWithNothingSelected()
         session.save()
+    }
+
+    /// A finished blend leaves nothing selected, as the reference modeller
+    /// does: selecting the whole body afterwards meant the next tap or
+    /// Delete acted on a body the user never picked.
+    private func finishBlendWithNothingSelected() {
+        selection.removeAll()
+        mode = .idle
     }
 
     // MARK: - Shell (Phase E, spec §4.4)
