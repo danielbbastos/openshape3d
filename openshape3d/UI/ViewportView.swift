@@ -28,6 +28,7 @@ struct ViewportView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MTKView, context: Context) {
+        context.coordinator.setDarkAppearance(context.environment.colorScheme == .dark)
         context.coordinator.sceneDidChange()
         context.coordinator.setPalette(frame: paletteFrame, onRight: paletteOnRight)
     }
@@ -57,6 +58,17 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         viewModel.cameraControl = self
     }
 
+    /// Dark mode on or off for the viewport background. Also follows the
+    /// view's own trait changes (a system switch while the app is open).
+    func setDarkAppearance(_ dark: Bool) {
+        guard let renderer, renderer.darkAppearance != dark else { return }
+        renderer.darkAppearance = dark
+        view?.clearColor = dark
+            ? MTLClearColor(red: 0.098, green: 0.098, blue: 0.098, alpha: 1)
+            : MTLClearColor(red: 0.93, green: 0.94, blue: 0.96, alpha: 1)
+        view?.setNeedsDisplay()
+    }
+
     func attach(to view: MTKView) {
         guard let context = RenderContext() else {
             assertionFailure("Metal is unavailable")
@@ -74,6 +86,10 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         view.delegate = renderer
         self.renderer = renderer
         self.view = view
+        setDarkAppearance(view.traitCollection.userInterfaceStyle == .dark)
+        view.registerForTraitChanges([UITraitUserInterfaceStyle.self]) { [weak self] (view: MTKView, _) in
+            self?.setDarkAppearance(view.traitCollection.userInterfaceStyle == .dark)
+        }
         cameraAnimator = CameraAnimator(renderer: renderer, view: view)
         gestures.attach(to: view, renderer: renderer)
         #if DEBUG

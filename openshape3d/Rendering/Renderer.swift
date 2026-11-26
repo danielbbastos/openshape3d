@@ -25,6 +25,19 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     private let cache = GPUResourceCache()
 
+    /// The app is in dark mode (Settings ▸ Theme, or the system's): the
+    /// viewport goes dark with it instead of staying light grey.
+    var darkAppearance = false
+
+    /// The modelling background, top and bottom of its gradient. Dark is
+    /// Shapr3D's near-flat #191919, a touch lighter at the top; light is the
+    /// app's original pale grey.
+    static func viewportBackground(dark: Bool) -> (top: SIMD4<Float>, bottom: SIMD4<Float>) {
+        dark
+            ? (SIMD4(0.118, 0.118, 0.125, 1), SIMD4(0.098, 0.098, 0.098, 1))
+            : (SIMD4(0.94, 0.95, 0.97, 1), SIMD4(0.82, 0.84, 0.88, 1))
+    }
+
     // Coplanar tie-break (#141, `CoplanarDepthRanks`): each opaque body's
     // rank, recomputed only when the bodies, their placement or the selection
     // change, and the mesh-local boxes it is computed from.
@@ -849,8 +862,9 @@ final class Renderer: NSObject, MTKViewDelegate {
         frame.keyLightDirection = SIMD4(lightDirection, 0)
         frame.skyColor = SIMD4(1.0, 1.0, 1.05, 1)
         frame.groundColor = SIMD4(0.62, 0.60, 0.58, 1)
-        frame.backgroundTop = SIMD4(0.94, 0.95, 0.97, 1)
-        frame.backgroundBottom = SIMD4(0.82, 0.84, 0.88, 1)
+        let background = Self.viewportBackground(dark: darkAppearance)
+        frame.backgroundTop = background.top
+        frame.backgroundBottom = background.bottom
         if let lighting = scene.visualization {
             // Visualization: a world-fixed sun and the environment's colours.
             frame.keyLightDirection = SIMD4(lighting.lightDirection, 0)
