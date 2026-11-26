@@ -1869,6 +1869,11 @@ final class EditorViewModel {
                     segments: Self.chainAnchorMarkerSegments(at: anchor, on: sketch.plane),
                     color: pendingColor))
             }
+            if let anchor = shapeTapAnchor {
+                scene.sketchLines.append(SketchLineBatch(
+                    segments: Self.chainAnchorMarkerSegments(at: anchor.point, on: sketch.plane),
+                    color: pendingColor))
+            }
             // Live auto-constraint guides (plan §B): violet reference lines for
             // the relationships being inferred for the in-progress stroke.
             if !activeGuides.isEmpty {
@@ -6839,6 +6844,7 @@ final class EditorViewModel {
         if isPickingSymmetryAxis { cancelSymmetryAxisPick(); return }
         if isPickingSketchMirrorAxis { cancelSketchMirrorPick(); return }
         if hasPendingRectangle { clearRectanglePlacement(); return }
+        if hasPendingShapeTap { clearShapeTapPlacement(); return }
         // Native three-point construction leaves drawing mode when Undo
         // changes committed history. Pending-placement cancellation above
         // remains separate and does not consume document history.
@@ -7049,6 +7055,7 @@ final class EditorViewModel {
         }
         activeSketchTransformControl = nil
         clearRectanglePlacement()
+        clearShapeTapPlacement()
         if case .rotatingAroundAxis = mode { cancelRotateAxis() }
     }
 
@@ -11141,6 +11148,55 @@ final class EditorViewModel {
         rectangleType = type
     }
 
+    // MARK: Circle / Ellipse / Polygon by two taps (#142)
+
+    /// The centre a first tap set for Circle, Ellipse or Polygon, waiting for
+    /// the tap that sets the radius / corner / vertex — the Rectangle's
+    /// two-tap flow, for a mouse or trackpad where clicking twice is the
+    /// natural gesture. Dragging still draws; a drag begun at this point
+    /// draws from it.
+    private var shapeTapAnchor: (point: SIMD2<Double>, raw: SIMD2<Double>)?
+    var hasPendingShapeTap: Bool { shapeTapAnchor != nil }
+
+    /// The tools placed centre first, then a second point.
+    nonisolated static func isCenterTapTool(_ tool: SketchTool?) -> Bool {
+        tool == .circle || tool == .ellipse || tool == .polygon
+    }
+
+    /// Drop a pending first tap (and its rubber band). No history involved.
+    func clearShapeTapPlacement() {
+        guard shapeTapAnchor != nil else { return }
+        shapeTapAnchor = nil
+        pendingEntity = nil
+        sketchStrokeStart = nil
+        sketchStrokeCurrent = nil
+        activeGuides = []
+        pendingInferredConstraints = []
+    }
+
+    /// First tap: the centre. Second tap: commit through the same path a drag
+    /// release takes (`endSketchStroke`), so snapping, inferred constraints
+    /// and the selection left behind are the drag's.
+    private func handleCenterShapeTap(ray: Ray) {
+        guard case .sketching = mode, let raw = rawSketchPoint(from: ray) else { return }
+        clearChain()
+        guard let anchor = shapeTapAnchor else {
+            guard let point = sketchPoint(from: ray) else { return }
+            selectedSketchEntityIDs.removeAll()
+            selectedSketchPoints.removeAll()
+            selectedConstraintID = nil
+            selectedDimensionID = nil
+            shapeTapAnchor = (point, raw)
+            return
+        }
+        let before = activeSketch?.entities.count ?? 0
+        sketchStrokeStart = anchor.point
+        sketchStrokeStartRaw = anchor.raw
+        endSketchStroke(ray: ray)
+        // A second tap on the centre itself makes nothing: keep waiting.
+        if (activeSketch?.entities.count ?? 0) > before { shapeTapAnchor = nil }
+    }
+
     func clearRectanglePlacement() {
         rectangleAnchor = nil
         rectangleBaseline = nil
@@ -11444,7 +11500,7 @@ final class EditorViewModel {
     var sketchRectangleCenterLockMarkers: [SketchPointMarker] {
         let releasedCenter = (mode.sketchTool == .circle ||
             (mode.sketchTool == .rect && (rectangleType == .center || rectangleType == .threePoint)))
-            && !hasPendingRectangle && pendingEntity == nil
+            && !hasPendingRectangle && !hasPendingShapeTap && pendingEntity == nil
         guard mode.isSketching, mode.sketchTool == nil || releasedCenter,
               editingDimension == nil, !sketchTransformActive else { return [] }
         return (sketchRectangleCenterMarkers + sketchCircleCenterMarkers).filter(\.isSelected)
@@ -12362,6 +12418,10 @@ final class EditorViewModel {
         }
         if tool == .rect {
             handleRectangleTap(ray: ray)
+            return
+        }
+        if Self.isCenterTapTool(tool) {
+            handleCenterShapeTap(ray: ray)
             return
         }
         if tool == .spline {
@@ -13700,6 +13760,15 @@ final class EditorViewModel {
             lineSnapHoverActive = activeSnap != nil
             return previous?.kind != activeSnap?.kind || previous?.point != activeSnap?.point
         }
+        if Self.isCenterTapTool(mode.sketchTool), let anchor = shapeTapAnchor {
+            // The rubber band of a drag, driven by the hovering pointer.
+            guard let ray else { return false }
+            let previous = pendingEntity
+            sketchStrokeStart = anchor.point
+            sketchStrokeStartRaw = anchor.raw
+            updateSketchStroke(ray: ray)
+            return previous != pendingEntity
+        }
         if mode.sketchTool == .rect, hasPendingRectangle {
             let before = rectanglePreview
             let previousEntity = pendingEntity
@@ -13917,6 +13986,7 @@ final class EditorViewModel {
     func startSketch(tool: SketchTool?) {
         cancelSymmetryAxisPick()
         clearRectanglePlacement()
+        clearShapeTapPlacement()
         clearSplinePlacement()
         if case .sketching(let id, _) = mode {
             commitPendingArc()
@@ -13969,6 +14039,7 @@ final class EditorViewModel {
         cancelSymmetryAxisPick()
         guard case .sketching(let id, _) = mode else { return }
         clearRectanglePlacement()
+        clearShapeTapPlacement()
         clearSplinePlacement()
         editingDimension = nil
         commitPendingArc()
@@ -14109,6 +14180,7 @@ final class EditorViewModel {
         itemSelectedSketchID = nil
         cancelSymmetryAxisPick()
         clearRectanglePlacement()
+        clearShapeTapPlacement()
         editingDimension = nil
         commitPendingArc()
         clearChain()
@@ -14340,6 +14412,16 @@ final class EditorViewModel {
             }
         }
         if tool == .rect, let anchor = rectangleAnchor { point = anchor }
+        var strokeStartRaw = raw
+        if let anchor = shapeTapAnchor {
+            // Pressed on the tapped centre: draw from it. Pressed elsewhere:
+            // the tap is forgotten and this is an ordinary drag.
+            if Self.isCenterTapTool(tool), simd_length(raw - anchor.raw) <= 2 * sketchSnapTolerance {
+                point = anchor.point
+                strokeStartRaw = anchor.raw
+            }
+            shapeTapAnchor = nil
+        }
         if tool != .offset {
             selectedSketchEntityIDs.removeAll()
             selectedSketchPoints.removeAll()
@@ -14347,7 +14429,7 @@ final class EditorViewModel {
             selectedDimensionID = nil
         }
         sketchStrokeStart = point
-        sketchStrokeStartRaw = raw
+        sketchStrokeStartRaw = strokeStartRaw
         sketchStrokeCurrent = point
         pendingEntity = nil
         return true
