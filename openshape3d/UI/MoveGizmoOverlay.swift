@@ -99,30 +99,63 @@ struct MoveGizmoOverlay: View {
         }
     }
 
-    // MARK: - Solid handle look (Shapr3D: white, lit from above, thin outline)
+    // MARK: - Solid handle look (Shapr3D: a white slab with grey sides)
 
-    /// One handle drawn as a single solid: a top-lit white gradient (blue
-    /// when lit), ONE even dark outline, and a soft drop shadow that lifts it
-    /// off the model. Every handle used to be an outline copy scaled up
-    /// behind the fill, which left uneven borders and dark seams where the
-    /// pieces overlapped; drawing the union once has neither.
-    static func solidHandle(_ path: Path, lit: Bool) -> some View {
-        let box = path.boundingRect.insetBy(dx: -2, dy: -2)
-        let local = path.offsetBy(dx: -box.minX, dy: -box.minY)
-        let colors: [Color] = lit
-            ? [Color(red: 0.50, green: 0.74, blue: 1.0), Color(red: 0.16, green: 0.46, blue: 0.96)]
-            : [Color(white: 1.0), Color(white: 0.93), Color(white: 0.76)]
+    /// The depth arrows, rings and scale grips show: their side falls a
+    /// little below and right of the face, as if lit from the top left.
+    static let slabDepth = CGSize(width: 1.5, height: 3.5)
+
+    /// One handle drawn as a thin 3D slab, the way Shapr3D's are: the face is
+    /// flat white (blue when lit), the side — the same shape pushed back by
+    /// `depth` — is grey, and one thin dark line runs round the silhouette.
+    /// No shading on the face and no drop shadow: the sides are what make it
+    /// read as solid.
+    static func solidHandle(_ path: Path, lit: Bool, depth: CGSize = slabDepth) -> some View {
+        let side = extrusion(of: path, depth: depth)
+        let silhouette = side.union(path)
+        let box = silhouette.boundingRect.insetBy(dx: -2, dy: -2)
+        let dx = -box.minX, dy = -box.minY
+        let face = lit ? Color(red: 0.36, green: 0.62, blue: 1.0) : Color(white: 0.98)
+        let sides = lit ? Color(red: 0.12, green: 0.36, blue: 0.80) : Color(white: 0.60)
         return ZStack {
-            local.fill(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom))
-            // A thin bright rim along the top edge reads as a bevel.
-            local.stroke(Color.white.opacity(lit ? 0.35 : 0.9), lineWidth: 0.75)
-                .mask(LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .center))
-            local.stroke(Color(white: 0.13), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
+            silhouette.offsetBy(dx: dx, dy: dy).fill(sides)
+            path.offsetBy(dx: dx, dy: dy).fill(face)
+            // Where the face meets its side.
+            path.offsetBy(dx: dx, dy: dy)
+                .stroke(Color(white: lit ? 0.10 : 0.42), style: StrokeStyle(lineWidth: 0.7, lineJoin: .round))
+            silhouette.offsetBy(dx: dx, dy: dy)
+                .stroke(Color(white: 0.12), style: StrokeStyle(lineWidth: 1.1, lineJoin: .round))
         }
         .frame(width: box.width, height: box.height)
-        .compositingGroup()
-        .shadow(color: .black.opacity(0.5), radius: 2.5, x: 0, y: 1.5)
         .position(x: box.midX, y: box.midY)
+    }
+
+    /// The volume `path` sweeps when pushed back by `depth`: copies every
+    /// point along the way, unioned, so the sides join the face with no gap.
+    static func extrusion(of path: Path, depth: CGSize) -> Path {
+        let length = hypot(depth.width, depth.height)
+        guard length > 0.25 else { return path }
+        let steps = max(1, Int(length.rounded(.up)))
+        var swept = path
+        for step in 1...steps {
+            let t = CGFloat(step) / CGFloat(steps)
+            swept = swept.union(path.offsetBy(dx: depth.width * t, dy: depth.height * t))
+        }
+        return swept
+    }
+
+    /// A plane tile's thickness on screen: its plane normal projected, so a
+    /// tile seen face-on shows no side and one tipped away shows more. The
+    /// sign is chosen so the side falls below the face, like the arrows'.
+    static func tileDepth(normal: SIMD3<Float>, project: (SIMD3<Float>) -> CGPoint?) -> CGSize {
+        let thickness = GizmoScreenLayout.armLocal * 0.07
+        guard let o = project(.zero), let n = project(normal * thickness) else { return slabDepth }
+        var d = CGSize(width: n.x - o.x, height: n.y - o.y)
+        if d.height < 0 || (abs(d.height) < 0.01 && d.width < 0) { d = CGSize(width: -d.width, height: -d.height) }
+        // Never thinner than a hairline nor thicker than the arrows look.
+        let length = hypot(d.width, d.height)
+        if length > 5 { d = CGSize(width: d.width * 5 / length, height: d.height * 5 / length) }
+        return d
     }
 
     private func stemPath(_ a: CGPoint, _ b: CGPoint) -> Path {
@@ -231,19 +264,20 @@ struct MoveGizmoOverlay: View {
         // drawn is exactly what is grabbable.
         let tiles = GizmoScreenLayout.visiblePlaneQuads(project: ctx.project)
         ForEach(tiles) { tile in
-            planeTile(tile.part, quad: tile.quad, area: tile.area)
+            planeTile(tile.part, quad: tile.quad, area: tile.area,
+                      depth: Self.tileDepth(normal: tile.part.axisDirection, project: ctx.project))
         }
     }
 
     @ViewBuilder
-    private func planeTile(_ part: GizmoPart, quad: [CGPoint], area: CGFloat) -> some View {
+    private func planeTile(_ part: GizmoPart, quad: [CGPoint], area: CGFloat, depth: CGSize) -> some View {
         let path = Path { p in
             p.addLines(quad)
             p.closeSubpath()
         }
         // Corners rounded outward the way the arrows are.
         let rounded = path.union(path.strokedPath(StrokeStyle(lineWidth: 4, lineJoin: .round)))
-        Self.solidHandle(rounded, lit: viewModel.litGizmoPart == part)
+        Self.solidHandle(rounded, lit: viewModel.litGizmoPart == part, depth: depth)
             // Fade a tile as it tips toward edge-on, so it never reads as a
             // crisp target while it is collapsing into a line.
             .opacity(min(1, Double(area) / 90))
@@ -263,7 +297,6 @@ struct MoveGizmoOverlay: View {
                     .frame(width: 16, height: 16)
                 Circle().fill(Self.pivot).frame(width: 7, height: 7)
             }
-            .shadow(color: .black.opacity(0.45), radius: 2, x: 0, y: 1)
             .position(p)
         }
     }
