@@ -580,6 +580,13 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
                     atWorldPoints:(NSData *)worldPoints
                         tolerance:(double)tolerance;
 
+/// The same for a symmetric chamfer: the largest setback the edges near
+/// `worldPoints` take, by bisection over real `BRepFilletAPI_MakeChamfer`
+/// builds. Compute once per drag. 0 when nothing chamferable is near.
++ (double)maxChamferDistanceForShape:(OCCTShape *)shape
+                       atWorldPoints:(NSData *)worldPoints
+                           tolerance:(double)tolerance;
+
 /// Exact solid volume (mm³) via `BRepGProp`; 0 on failure. Cheap enough for
 /// sanity checks (a shell must REMOVE material) and exact enough for tests to
 /// pin against analytically-derived values.

@@ -59,6 +59,38 @@ final class KernelEdgeTests: XCTestCase {
         XCTAssertFalse(EdgeTopology.selectableEdges(from: creases).contains { isTangent($0) && $0.length > 1 })
     }
 
+    /// The flat face beside a fillet is flat (so a tap there may pick the
+    /// fillet's edge), and the fillet is a face of its own.
+    func testAFilletIsItsOwnFace() throws {
+        let brep = try box()
+        var filleted: BRepHandle?
+        for edge in 1...12 {
+            if case let .success((handle, _)) = OCCTKernel.filletResultWithAncestry(brep, edgeIndices: [edge], radius: 3) {
+                filleted = handle; break
+            }
+        }
+        let mesh = try body(XCTUnwrap(filleted)).render
+        func normal(_ t: Int) -> SIMD3<Float> {
+            let a = mesh.positions[Int(mesh.indices[t * 3])]
+            let b = mesh.positions[Int(mesh.indices[t * 3 + 1])]
+            let c = mesh.positions[Int(mesh.indices[t * 3 + 2])]
+            return simd_normalize(simd_cross(b - a, c - a))
+        }
+        let axes: [SIMD3<Float>] = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        func isAxisAligned(_ n: SIMD3<Float>) -> Bool { axes.contains { abs(simd_dot(n, $0)) > 0.9999 } }
+        let triangles = 0..<mesh.triangleCount
+        let roundTriangle = try XCTUnwrap(triangles.first { !isAxisAligned(normal($0)) })
+        let round = try XCTUnwrap(FaceTopology.smoothRegion(in: mesh, seedTriangle: roundTriangle))
+        XCTAssertTrue(round.isCurved)
+        XCTAssertFalse(round.triangles.contains { isAxisAligned(normal($0)) }, "the fillet stops at its edges")
+
+        // Every flat face reads as flat, including the two beside the fillet.
+        for t in triangles where isAxisAligned(normal(t)) {
+            let flat = try XCTUnwrap(FaceTopology.smoothRegion(in: mesh, seedTriangle: t))
+            XCTAssertFalse(flat.isCurved, "triangle \(t)")
+        }
+    }
+
     func testACylinderDrawsOnlyItsRims() throws {
         let cyl = try XCTUnwrap(OCCTKernel.primitiveShape(.cylinder(radius: 5, height: 8), placement: .identity))
         let b = try body(cyl)

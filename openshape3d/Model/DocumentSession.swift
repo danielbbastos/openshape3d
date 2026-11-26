@@ -242,6 +242,30 @@ final class DocumentSession {
         return result.bodies.first { $0.id == bodyID }
     }
 
+    /// The bodies the history would produce with feature `id` changed to
+    /// `kind`, without touching the document or the memo: the live preview of
+    /// editing a feature that later features build on, so a chamfer made
+    /// after a fillet stays on screen while the fillet is resized. Against a
+    /// copy of the memo, so everything before `id` is free. Nil when `id` or
+    /// any later feature fails with the edit (the caller falls back).
+    func previewBodies(editing id: FeatureID, to kind: FeatureKind) -> [Body]? {
+        var graph = document.features
+        guard let index = graph.index(of: id) else { return nil }
+        graph.nodes[index].kind = kind
+        var counter = Self.scratchRevisionBase
+        var scratch = evalCache
+        let result = graph.evaluate(
+            sketches: document.sketches,
+            planes: document.planes,
+            naming: naming,
+            nextRevision: { counter &+= 1; return counter },
+            cache: &scratch
+        )
+        let affected = Set(graph.nodes[index...].map(\.id))
+        guard !result.errors.keys.contains(where: affected.contains) else { return nil }
+        return result.bodies
+    }
+
     func rebuildFrom(_ id: FeatureID, edit: EditFeatureCommand? = nil) {
         // Graph with the pending parameter edit applied, so replay sees the new
         // parameters without mutating the live document yet.

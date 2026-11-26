@@ -1545,6 +1545,22 @@ final class EditorViewModel {
                 selectionState: SelectionStateNone.rawValue,
                 material: sourceMaterial(blendBodyID, on: preview)
             ))
+            // The shape as it was before this edit, faded, to compare
+            // against; gone once the blend is applied or cancelled.
+            // Translucent bodies are never picked.
+            if let bodyID = blendBodyID, let before = session.document.body(with: bodyID) {
+                scene.bodies.append(BodyDrawable(
+                    id: blendGhostID,
+                    renderMesh: before.render,
+                    edges: before.edges,
+                    meshRevision: before.meshRevision,
+                    modelMatrix: before.transform.matrixFloat,
+                    baseColor: SIMD4(0.72, 0.74, 0.78, 1),
+                    selectionState: SelectionStateNone.rawValue,
+                    isTranslucent: true,
+                    isGhost: true
+                ))
+            }
         }
 
         // Selected-face highlight (Shapr3D: tap selects a face). While a flat
@@ -4701,10 +4717,28 @@ final class EditorViewModel {
         // blendBodyID, but remove the ordinary selection so the newly armed
         // tool gets an unobstructed picking surface.
         selection.removeAll()
+        blendKindOpen = false
         blendValue = 1
         blendPreview = nil
         mode = .pickingBlendEdges(kind)
     }
+
+    /// An edge picked straight off the body (not from Tools or History):
+    /// the arrow's drag sets a SIGNED size — toward the body a chamfer, away
+    /// a fillet — and crossing zero switches between them, for as long as
+    /// the pick lasts (as the reference modeller does on screen). Typing a
+    /// size keeps whichever kind is showing (fillet to start with).
+    private(set) var blendKindOpen = false
+    /// The signed size at the start of the current drag (see
+    /// `blendSignedSize`), for a pick whose kind is open.
+    private var blendDragSignedStart: Double = 0
+    /// Each kind's ceiling for this drag, worked out the first time the
+    /// drag reaches that side (a value of nil: the kernel found none).
+    private var blendDragCaps: [BlendKind: Double?] = [:]
+    /// Draws the shape as it was before this blend edit, translucent, under
+    /// the preview; an id of its own so the GPU cache never swaps the real
+    /// body's buffers back and forth.
+    private let blendGhostID = BodyID()
 
     /// The feature being re-edited, when the pick was entered from a History
     /// row rather than from the Modify palette. Nil for a fresh blend.
@@ -4730,6 +4764,47 @@ final class EditorViewModel {
         if let editSource = blendEditSource { return editSource }
         guard let id = blendBodyID else { return nil }
         return session.document.body(with: id)
+    }
+
+    /// The face under `seedTriangle` (its smooth region when curved, its
+    /// flat face otherwise), if a fillet or chamfer of this body made it:
+    /// reopen that feature. False when no blend made it.
+    private func beginBlendEditFromFace(body: Body, seedTriangle: Int) -> Bool {
+        let mesh = body.render
+        let triangles: [Int]
+        if let smooth = FaceTopology.smoothRegion(in: mesh, seedTriangle: seedTriangle), smooth.isCurved {
+            triangles = smooth.triangles
+        } else if let face = FaceTopology.planarFace(in: mesh, seedTriangle: seedTriangle) {
+            triangles = face.triangles
+        } else {
+            return false
+        }
+        var points: [SIMD3<Double>] = []
+        points.reserveCapacity(triangles.count * 3)
+        for t in triangles {
+            for k in 0..<3 { points.append(SIMD3<Double>(mesh.positions[Int(mesh.indices[t * 3 + k])])) }
+        }
+        guard let id = session.document.features.blendFeature(forBody: body.id, facePoints: points) else {
+            return false
+        }
+        return beginBlendEdit(id)
+    }
+
+    /// The tapped edge, when it is a smooth (tangent) one, if a fillet of
+    /// this body made it: reopen that fillet. False otherwise.
+    private func beginBlendEditFromTangentEdge(body: Body, hit: PickHit) -> Bool {
+        let inverse = simd_inverse(body.transform.matrixFloat)
+        let local4 = inverse * SIMD4(hit.worldPoint, 1)
+        let local = SIMD3<Float>(local4.x, local4.y, local4.z)
+        let edges = EdgeTopology.selectableEdges(from: body.render)
+        guard let nearest = edges.min(by: {
+            Self.pointSegmentDistance(local, $0.start, $0.end) < Self.pointSegmentDistance(local, $1.start, $1.end)
+        }), simd_dot(nearest.normalA, nearest.normalB) > 0.99 else { return false }
+        let points = [nearest.start, nearest.midpoint, nearest.end].map { SIMD3<Double>($0) }
+        guard let id = session.document.features.blendFeature(forBody: body.id, facePoints: points) else {
+            return false
+        }
+        return beginBlendEdit(id)
     }
 
     /// Re-enter edge picking for an existing chamfer/fillet, seeded with the
@@ -4840,6 +4915,7 @@ final class EditorViewModel {
     /// state WITHOUT touching `selection` — deleteSelection deletes whatever is
     /// in `selection`, so mutating it here would change what gets deleted.
     private func resetBlendState() {
+        blendKindOpen = false
         blendSelectedEdges = []
         blendBodyID = nil
         blendPreview = nil
@@ -4975,6 +5051,18 @@ final class EditorViewModel {
         let started = ProcessInfo.processInfo.systemUptime
         blendPreview = blendedBody(
             kind, source: source, revision: (1 << 62) | blendPreviewRevision)
+        // Editing a blend that later features build on: show the whole
+        // history with the new size, not the blend alone on its input body,
+        // which dropped every later feature (a chamfer made after this
+        // fillet vanished while the fillet was selected).
+        if blendPreview != nil, let featureID = blendEditingFeature,
+           hasLaterFeatures(than: featureID),
+           let after = editedBlendKind(kind, source: source),
+           let bodies = session.previewBodies(editing: featureID, to: after),
+           var full = bodies.first(where: { $0.id == source.id }) {
+            full.meshRevision = (1 << 62) | blendPreviewRevision
+            blendPreview = full
+        }
         lastPreviewFinished = ProcessInfo.processInfo.systemUptime
         lastPreviewDuration = lastPreviewFinished - started
     }
@@ -4984,6 +5072,8 @@ final class EditorViewModel {
     /// keeps Apply disabled, mirroring the red arrow).
     var canCommitBlend: Bool {
         if case .pickingBlendEdges = mode {
+            // Reopened at zero: applying removes the blend.
+            if blendEditingFeature != nil, blendValue <= 1e-6 { return true }
             return !blendSelectedEdges.isEmpty && blendValue > 1e-6
                 && blendPreview != nil
         }
@@ -5004,24 +5094,64 @@ final class EditorViewModel {
         else { return false }
         blendDragStartValue = blendValue
         isDraggingBlendSize = true
-        // Computed ONCE here (a handful of fillet builds), never per tick.
-        // The edge set is frozen for the duration of the drag.
+        // Computed ONCE per drag (a handful of fillet builds), never per
+        // tick. The edge set is frozen for the duration of the drag. An open
+        // kind asks only when the drag reaches the fillet side.
         blendDragMax = nil
-        if kind == .fillet, OCCTKernel.useOCCTAsSourceOfTruth,
-           let source = blendSource, let brep = source.brep {
-            let midpoints = blendSelectedEdges.map { edge -> SIMD3<Double> in
-                SIMD3(Double(edge.midpoint.x), Double(edge.midpoint.y), Double(edge.midpoint.z))
-            }
-            let cap = OCCTKernel.maxFilletRadius(
-                brep, at: midpoints, tolerance: OCCTKernel.matchTolerance(for: brep))
-            if cap > 0 { blendDragMax = cap }
+        blendDragCaps = [:]
+        if blendKindOpen {
+            blendDragSignedStart = kind == .chamfer ? blendValue : -blendValue
+        } else {
+            blendDragMax = blendDragCap(kind)
         }
         return true
+    }
+
+    /// The largest blend of `kind` the selected edges take, by real kernel
+    /// builds, so the arrow stops there instead of running into "too large
+    /// for the local geometry" (which dropped the preview back to nothing).
+    /// Nil when unknown (a mesh-only body, or nothing built).
+    private func blendDragCap(_ kind: BlendKind) -> Double? {
+        guard OCCTKernel.useOCCTAsSourceOfTruth, let source = blendSource, let brep = source.brep
+        else { return nil }
+        let midpoints = blendSelectedEdges.map { edge -> SIMD3<Double> in
+            SIMD3(Double(edge.midpoint.x), Double(edge.midpoint.y), Double(edge.midpoint.z))
+        }
+        let tolerance = OCCTKernel.matchTolerance(for: brep)
+        let cap = kind == .fillet
+            ? OCCTKernel.maxFilletRadius(brep, at: midpoints, tolerance: tolerance)
+            : OCCTKernel.maxChamferDistance(brep, at: midpoints, tolerance: tolerance)
+        return cap > 0 ? cap : nil
+    }
+
+    /// An open pick's kind and size for signed size `signed` (start of
+    /// drag plus the drag's travel along the arrow, which points into the
+    /// body): positive is a chamfer of that setback, negative a fillet of
+    /// that radius, zero neither (`kind` nil: keep what is showing).
+    nonisolated static func blendSignedSize(_ signed: Double) -> (kind: BlendKind?, value: Double) {
+        if signed > 0 { return (.chamfer, signed) }
+        if signed < 0 { return (.fillet, -signed) }
+        return (nil, 0)
     }
 
     /// `delta` is world mm along the arrow's pointing direction (into the body).
     func updateBlendDrag(delta: Double) {
         guard let start = blendDragStartValue else { return }
+        if blendKindOpen {
+            let (chosen, size) = Self.blendSignedSize(blendDragSignedStart + delta)
+            var next = size
+            if let chosen {
+                if blendDragCaps[chosen] == nil { blendDragCaps[chosen] = .some(blendDragCap(chosen)) }
+                if let cap = blendDragCaps[chosen] ?? nil { next = min(next, cap) }
+            }
+            if let chosen, case .pickingBlendEdges(let current) = mode, chosen != current {
+                mode = .pickingBlendEdges(chosen)
+                // Same size, other kind: the value's didSet would not fire.
+                if next == blendValue { updateBlendPreview() }
+            }
+            blendValue = next
+            return
+        }
         var next = max(0, start + delta)
         // Clamp to what the kernel can actually build, so the drag never
         // enters the range Apply would refuse.
@@ -5042,7 +5172,12 @@ final class EditorViewModel {
     /// the tap, and toggle it in the selection. Tapping a second body restarts
     /// the pick on that body (a blend stays single-body).
     private func handleBlendEdgeTap(ray: Ray, kind: BlendKind) {
-        guard let hit = HitTester.pickBody(ray: ray, in: scene) else { return }
+        guard let hit = HitTester.pickBody(ray: ray, in: scene) else {
+            // A tap in empty space finishes the tool: apply what is showing,
+            // or leave when there is nothing to apply.
+            if canCommitBlend { commitBlend() } else { cancelBlend() }
+            return
+        }
         // While editing, edges must come from the body the feature CONSUMED —
         // the document's copy already carries the blend, so its edges are the
         // rounded ones, which are not what the feature names.
@@ -5203,7 +5338,39 @@ final class EditorViewModel {
     /// Apply the blend: build the new mesh live and record a `.chamfer`/`.fillet`
     /// feature node so it rebuilds parametrically. The EdgeRefs pin each edge by
     /// signature against the owning feature's body.
+    /// The edited blend feature as the current pick and size describe it.
+    private func editedBlendKind(_ kind: BlendKind, source: Body) -> FeatureKind? {
+        guard let bodyRef = blendEditBodyRef else { return nil }
+        let edgeRefs = blendSelectedEdges.map {
+            EdgeRef(body: bodyRef, signature: EdgeTopology.signature(of: $0),
+                    faceNames: mintEdgeName(body: source, edge: $0))
+        }
+        return kind == .fillet
+            ? .fillet(body: bodyRef, edges: edgeRefs, radius: Expr(value: blendValue))
+            : .chamfer(body: bodyRef, edges: edgeRefs, setback: Expr(value: blendValue))
+    }
+
+    /// Whether any active feature comes after `id` in the history.
+    private func hasLaterFeatures(than id: FeatureID) -> Bool {
+        let graph = session.document.features
+        guard let index = graph.index(of: id) else { return false }
+        return index + 1 < (graph.rollbackIndex ?? graph.nodes.count)
+    }
+
     func commitBlend() {
+        // A reopened blend taken down to zero is removed, so the edge is
+        // sharp again (and the next pick of it chooses its kind anew).
+        if case .pickingBlendEdges = mode, let featureID = blendEditingFeature,
+           blendValue <= 1e-6 {
+            let bodyID = blendBodyID
+            resetBlendState()
+            deleteFeature(featureID)
+            if let bodyID, session.document.body(with: bodyID) != nil {
+                mode = .selected(bodyID)
+                selection = [bodyID]
+            }
+            return
+        }
         guard case .pickingBlendEdges(let kind) = mode,
               let bodyID = blendBodyID,
               let source = blendSource,
@@ -5215,14 +5382,7 @@ final class EditorViewModel {
         // produce the geometry, exactly as `editFeatureDistance` does. The
         // live-preview path below would instead REPLACE the body and append a
         // SECOND blend node on top of the first.
-        if let featureID = blendEditingFeature, let bodyRef = blendEditBodyRef {
-            let edgeRefs = blendSelectedEdges.map {
-                EdgeRef(body: bodyRef, signature: EdgeTopology.signature(of: $0),
-                        faceNames: mintEdgeName(body: source, edge: $0))
-            }
-            let after: FeatureKind = kind == .fillet
-                ? .fillet(body: bodyRef, edges: edgeRefs, radius: Expr(value: blendValue))
-                : .chamfer(body: bodyRef, edges: edgeRefs, setback: Expr(value: blendValue))
+        if let featureID = blendEditingFeature, let after = editedBlendKind(kind, source: source) {
             prepareForHistoryChange()
             resetBlendState()
             session.editFeature(featureID, to: after)
@@ -8219,8 +8379,26 @@ final class EditorViewModel {
             // "Chamfer/Fillet (F)"). Here that is the blend pick with the edge
             // already chosen; the info bar reads the edge count and length.
             if tapIsNearBodyEdge(hit: hit, body: body) {
+                // The edge where a fillet meets its neighbour is that
+                // fillet's: reopen it to resize (to zero removes it), as a
+                // tap on its round does — not a new blend that can't build.
+                if beginBlendEditFromTangentEdge(body: body, hit: hit) { return }
                 beginBlend(.fillet)
                 handleBlendEdgeTap(ray: ray, kind: .fillet)
+                // Picked straight off the body: the first drag decides
+                // between fillet and chamfer (see `blendKindOpen`), so
+                // nothing is cut until then.
+                if case .pickingBlendEdges = mode, !blendSelectedEdges.isEmpty {
+                    blendKindOpen = true
+                    blendValue = 0
+                }
+                return
+            }
+
+            // A fillet's round or a chamfer's bevel reopens that feature with
+            // its edges and drag handle, so its size changes in place. Before
+            // the cylinder test: a fillet on a box IS a cylindrical face.
+            if beginBlendEditFromFace(body: body, seedTriangle: hit.triangleIndex) {
                 return
             }
 

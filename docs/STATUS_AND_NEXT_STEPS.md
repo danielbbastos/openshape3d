@@ -50,6 +50,38 @@ with no line and no pick.
   pick, a cylinder draws only its rims, off-mesh segments refused, a
   reloaded B-rep finds the same edges).
 
+Follow-ups the same day, from testing on an iPad:
+
+- **Faces stop at kernel edges** (`FaceTopology.smoothRegion`): the flat
+  face beside a fillet is flat, and the fillet is its own face. The flood
+  used to cross the tangent edge and call the flat face curved, which also
+  refused the edge tap beside it.
+- **Tap a blend to resize it**: a tap on a fillet's round, a chamfer's
+  bevel, or a fillet's tangent edge reopens that feature
+  (`FeatureGraph.blendFeature(forBody:facePoints:)`: every point of the face
+  within the blend's size of an edge it replaced). Applying it at zero
+  deletes the feature, so the edge is sharp again.
+- **Fillet or chamfer by drag**: an edge picked off the body starts at size
+  0; the arrow's drag is a signed size, toward the body a chamfer, away a
+  fillet, crossing zero freely until applied (`blendKindOpen`,
+  `blendSignedSize`). Typing a size keeps the kind showing.
+- **Drag clamps for chamfers too**: `OCCTKernel.maxChamferDistance`, the
+  fillet cap's bisection over real builds generalised
+  (`OS3DBlendBuilds`/`OS3DMaxBlendSize`), so the arrow stops at the largest
+  setback instead of running into "too large for the local geometry".
+- **Ghost of the shape before the edit**, translucent and depth-biased back
+  (`BodyDrawable.isGhost`) so only what it adds shows; never picked.
+- **Editing a blend previews the whole history** (`DocumentSession.previewBodies`,
+  a dry run against a copy of the memo): later features (a chamfer after the
+  fillet) stay on screen.
+- **A tap in empty space finishes a blend** (applies, or leaves).
+- **Two-finger pan no longer jumps on release** (`TwoFingerPanTracker`): a
+  finger lifting moved the reported centroid, and the camera with it.
+- Tests: `BlendFaceLookupTests`, `BlendDragKindTests`, `BlendDragCapTests`,
+  `TwoFingerPanTrackerTests`, `KernelEdgeTests.testAFilletIsItsOwnFace`. UI
+  tests were run for the fillet-face and edge changes (nothing newly
+  failing); not rerun after the drag, ghost and chamfer-cap changes.
+
 ## Mission log — 2026-11-25, undo stalls on a large model
 
 Report: face → Sketch → a line → Undo took seconds, with a busy cursor.

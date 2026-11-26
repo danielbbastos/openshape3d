@@ -355,10 +355,15 @@ final class Renderer: NSObject, MTKViewDelegate {
             encoder.setDepthStencilState(pipelines.depthReadOnly)
             // Previews take the Tool Preview Opacity setting; a glass-like
             // material keeps its own opacity.
-            let alpha: Float? = drawable.isTranslucent ? scene.toolPreviewOpacity
+            let alpha: Float? = drawable.isGhost ? scene.toolPreviewOpacity * 0.45
+                : drawable.isTranslucent ? scene.toolPreviewOpacity
                 : mode == .xray ? 0.35 : nil
+            // A ghost loses every depth tie with the shape it shares faces
+            // with (positive bias = farther), so only what it adds shows.
+            if drawable.isGhost { encoder.setDepthBias(4, slopeScale: 2, clamp: 1e-3) }
             drawBody(drawable, encoder: encoder, pipeline: pipelines.litBlended,
                      alphaOverride: alpha)
+            if drawable.isGhost { encoder.setDepthBias(0, slopeScale: 0, clamp: 0) }
         }
         // …then see-through face materials (every patch in x-ray).
         if mode != .wireframe {

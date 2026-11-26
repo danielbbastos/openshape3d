@@ -65,6 +65,11 @@ struct BodyDrawable: Identifiable {
     var baseColor: SIMD4<Float>
     var selectionState: UInt32 = 0 // SelectionState raw value
     var isTranslucent: Bool = false
+    /// A translucent "before" shape behind a live edit (the blend ghost):
+    /// drawn faint and pushed back in depth, so it shows only where it
+    /// sticks out of the preview (the corner a fillet removes), never
+    /// flickering across the faces the two share.
+    var isGhost: Bool = false
     /// Optional appearance override; when set its baseColor/metallic/roughness
     /// replace `baseColor` and the default shading response.
     var material: BodyMaterial?

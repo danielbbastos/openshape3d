@@ -1130,6 +1130,16 @@ nonisolated enum OCCTKernel {
                                           tolerance: tolerance)
     }
 
+    /// The largest chamfer setback the edges near `points` take (see
+    /// `maxFilletRadius`); 0 when unknown.
+    static func maxChamferDistance(_ handle: BRepHandle, at points: [SIMD3<Double>],
+                                   tolerance: Double) -> Double {
+        guard !points.isEmpty else { return 0 }
+        return OCCTBridge.maxChamferDistance(for: handle.shape,
+                                             atWorldPoints: pack(points),
+                                             tolerance: tolerance)
+    }
+
     /// Pick-matching tolerance for a B-rep body — docs/FREECAD_PLAYBOOK.md T1.
     ///
     /// The points the pickers hand the bridge are midpoints of the OCCT

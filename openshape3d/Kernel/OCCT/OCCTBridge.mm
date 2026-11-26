@@ -3187,24 +3187,11 @@ static std::vector<float> OS3DEdgeSegments(const TopoDS_Shape &shape) {
 // contour-complete, per-edge generated, single-solid, analyzer-valid. The
 // bisection's probe — identical checks to the committing path, so what the
 // clamp says fits IS what Apply builds.
-static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
-                             const TopTools_IndexedMapOfShape &edgeMap,
-                             const std::set<Standard_Integer> &edges,
-                             double radius,
-                             double deadlineSeconds = kOS3DKernelDeadlineSeconds) {
+// Every chosen edge blended, one solid, valid.
+static bool OS3DBlendResultOK(BRepFilletAPI_LocalOperation &mk,
+                              const TopTools_IndexedMapOfShape &edgeMap,
+                              const std::set<Standard_Integer> &edges) {
     try {
-        BRepFilletAPI_MakeFillet mk(shape);
-        for (Standard_Integer i : edges) {
-            mk.Add(radius, TopoDS::Edge(edgeMap(i)));
-        }
-        // The SHORT deadline: a drag clamp runs ~7 of these probes, and one
-        // hanging probe would wedge the drag exactly like the boolean hang.
-        OS3DDeadlineProgress *deadline =
-            new OS3DDeadlineProgress(deadlineSeconds);
-        Handle(Message_ProgressIndicator) progress(deadline);
-        mk.Build(progress->Start());
-        if (deadline->Fired()) return false;
-        if (!mk.IsDone() || mk.NbFaultyContours() > 0) return false;
         TopTools_IndexedMapOfShape resultEdges;
         TopExp::MapShapes(mk.Shape(), TopAbs_EDGE, resultEdges);
         for (Standard_Integer i : edges) {
@@ -3219,9 +3206,66 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
     }
 }
 
+// Whether a blend of `size` on `edges` builds a single valid solid with
+// every edge blended. A fillet (radius) or a symmetric chamfer (setback),
+// built as the commit builds them, so a drag clamp and Apply agree.
+static bool OS3DBlendBuilds(const TopoDS_Shape &shape,
+                            const TopTools_IndexedMapOfShape &edgeMap,
+                            const std::set<Standard_Integer> &edges,
+                            double size, bool isFillet,
+                            double deadlineSeconds = kOS3DKernelDeadlineSeconds) {
+    try {
+        // The SHORT deadline: a drag clamp runs ~7 of these probes, and one
+        // hanging probe would wedge the drag exactly like the boolean hang.
+        OS3DDeadlineProgress *deadline =
+            new OS3DDeadlineProgress(deadlineSeconds);
+        Handle(Message_ProgressIndicator) progress(deadline);
+        if (isFillet) {
+            BRepFilletAPI_MakeFillet mk(shape);
+            for (Standard_Integer i : edges) mk.Add(size, TopoDS::Edge(edgeMap(i)));
+            mk.Build(progress->Start());
+            if (deadline->Fired()) return false;
+            if (!mk.IsDone() || mk.NbFaultyContours() > 0) return false;
+            return OS3DBlendResultOK(mk, edgeMap, edges);
+        }
+        BRepFilletAPI_MakeChamfer mk(shape);
+        for (Standard_Integer i : edges) mk.Add(size, TopoDS::Edge(edgeMap(i)));
+        mk.Build(progress->Start());
+        if (deadline->Fired()) return false;
+        if (!mk.IsDone()) return false;
+        return OS3DBlendResultOK(mk, edgeMap, edges);
+    } catch (...) {
+        return false;
+    }
+}
+
+static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
+                             const TopTools_IndexedMapOfShape &edgeMap,
+                             const std::set<Standard_Integer> &edges,
+                             double radius,
+                             double deadlineSeconds = kOS3DKernelDeadlineSeconds) {
+    return OS3DBlendBuilds(shape, edgeMap, edges, radius, true, deadlineSeconds);
+}
+
+static double OS3DMaxBlendSize(OCCTShape *shape, NSData *worldPoints,
+                               double tolerance, bool isFillet);
+
 + (double)maxFilletRadiusForShape:(OCCTShape *)shape
                     atWorldPoints:(NSData *)worldPoints
                         tolerance:(double)tolerance {
+    return OS3DMaxBlendSize(shape, worldPoints, tolerance, true);
+}
+
++ (double)maxChamferDistanceForShape:(OCCTShape *)shape
+                       atWorldPoints:(NSData *)worldPoints
+                           tolerance:(double)tolerance {
+    return OS3DMaxBlendSize(shape, worldPoints, tolerance, false);
+}
+
+// The largest blend size (fillet radius or chamfer setback) the edges near
+// `worldPoints` take, by bisection over real builds.
+static double OS3DMaxBlendSize(OCCTShape *shape, NSData *worldPoints,
+                               double tolerance, bool isFillet) {
     if (shape == nil) return 0.0;
     const NSUInteger count = worldPoints.length / (3 * sizeof(double));
     if (count == 0) return 0.0;
@@ -3267,10 +3311,10 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
 
         // ~7-step bisection over real builds. `lo` is always a radius that
         // BUILT; a tiny probe first so a hopeless pick returns 0 fast.
-        if (OS3DFilletBuilds(shape->_shape, edgeMap, qualified, hi)) return hi;
+        if (OS3DBlendBuilds(shape->_shape, edgeMap, qualified, hi, isFillet)) return hi;
         double lo = 0.0;
         const double probe = std::min(hi * 0.01, 0.05);
-        if (probe > 0 && OS3DFilletBuilds(shape->_shape, edgeMap, qualified, probe)) {
+        if (probe > 0 && OS3DBlendBuilds(shape->_shape, edgeMap, qualified, probe, isFillet)) {
             lo = probe;
         } else {
             // Whether a size builds is not monotonic: a tiny blend can fail
@@ -3284,7 +3328,7 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
             for (double r = 0.5 * hi; r > probe; r *= 0.5) {
                 const double left = budgetEnd - CFAbsoluteTimeGetCurrent();
                 if (left <= 0) break;
-                if (OS3DFilletBuilds(shape->_shape, edgeMap, qualified, r, left)) {
+                if (OS3DBlendBuilds(shape->_shape, edgeMap, qualified, r, isFillet, left)) {
                     lo = r;
                     hi = 2.0 * r;   // the last size tried above it failed
                     break;
@@ -3294,7 +3338,7 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
         }
         for (int step = 0; step < 7; ++step) {
             const double mid = 0.5 * (lo + hi);
-            if (OS3DFilletBuilds(shape->_shape, edgeMap, qualified, mid)) {
+            if (OS3DBlendBuilds(shape->_shape, edgeMap, qualified, mid, isFillet)) {
                 lo = mid;
             } else {
                 hi = mid;
