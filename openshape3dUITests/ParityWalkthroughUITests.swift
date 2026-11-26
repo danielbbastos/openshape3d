@@ -140,6 +140,10 @@ final class ParityWalkthroughUITests: XCTestCase {
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.85)).tap()
         sleep(1)
         app.buttons["MeasureButton"].firstMatch.tap()
+        // Measure opens on Object Measurements; switch to Point-to-Point.
+        XCTAssertTrue(app.otherElements["MeasurePanel"].waitForExistence(timeout: 3))
+        app.buttons["MeasureTypeMenu"].tap()
+        app.buttons["MeasureType-pointToPoint"].tap()
         XCTAssertTrue(app.staticTexts["Tap two points to measure"].waitForExistence(timeout: 3))
         window.coordinate(withNormalizedOffset: CGVector(dx: 0.34, dy: 0.62)).tap()
         sleep(1)
