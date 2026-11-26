@@ -49,6 +49,7 @@ final class ViewportGestureController: NSObject {
 
     private var lastPanLocation: CGPoint = .zero
     private var lastTwoFingerLocation: CGPoint = .zero
+    private var twoFingerPan = TwoFingerPanTracker()
     private weak var orbitRecognizer: UIPanGestureRecognizer?
     /// Set in shouldReceive: the one-finger drag is being driven by the Pencil.
     private var orbitTouchIsPencil = false
@@ -226,17 +227,16 @@ final class ViewportGestureController: NSObject {
         switch gesture.state {
         case .began:
             beginInteractive()
-            lastTwoFingerLocation = location
+            twoFingerPan.begin(at: location, touches: gesture.numberOfTouches)
         case .changed:
-            let delta = CGSize(
-                width: location.x - lastTwoFingerLocation.x,
-                height: location.y - lastTwoFingerLocation.y
-            )
-            lastTwoFingerLocation = location
+            // See `TwoFingerPanTracker`: a finger lifting or landing moves
+            // the centroid, not the hand, so it must not move the camera.
+            guard let delta = twoFingerPan.move(to: location, touches: gesture.numberOfTouches) else { return }
             renderer.camera.pan(deltaPixels: delta, viewportSize: view.bounds.size)
             redraw()
             cameraChanged?()
         case .ended, .cancelled, .failed:
+            twoFingerPan.end()
             endInteractive()
         default:
             break
