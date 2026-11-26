@@ -51,8 +51,11 @@ nonisolated enum SketchPlaneMirror {
         let sketchNormal = simd_normalize(sketchPlane.normal)
 
         // Perpendicular planes: the mirror line is where they meet, in the
-        // sketch's own coordinates. Its direction is in both planes.
-        if abs(simd_dot(n, sketchNormal)) < 1e-6 {
+        // sketch's own coordinates. Its direction is in both planes. A picked
+        // face's normal comes from the Float render mesh (and the body's
+        // Float rotation), so allow about 0.005° of slack: a hair off square
+        // must not make a second sketch a hair off the first.
+        if abs(simd_dot(n, sketchNormal)) < 1e-4 {
             let direction3 = simd_normalize(simd_cross(n, sketchNormal))
             // A point of the line: the sketch origin moved onto the mirror
             // plane along n (n lies in the sketch plane here).

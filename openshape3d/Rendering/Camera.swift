@@ -32,6 +32,10 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     var azimuth: Float = .pi / 5      // radians around +Y, 0 looks down -Z
     var elevation: Float = .pi / 7    // radians above the ground plane
     var projection: CameraProjection = .perspective(fovY: TurntableCamera.defaultFovY)
+    /// Turn of the picture about the line of sight, radians; positive turns
+    /// it counter-clockwise. Set by the spin arrows over the orientation cube
+    /// (spec §7.2); named views and head-on flights put it back to 0.
+    var roll: Float = 0
 
     static let defaultFovY: Float = 40 * .pi / 180
     /// A true plan view: the view matrix takes its up vector from the
@@ -69,7 +73,13 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     /// onto the view plane (the old fixed Y-up result); at ±90° it stays
     /// defined, pointing along the azimuth.
     var up: SIMD3<Float> {
-        SIMD3(-sin(elevation) * sin(azimuth), cos(elevation), -sin(elevation) * cos(azimuth))
+        let level = SIMD3(-sin(elevation) * sin(azimuth), cos(elevation), -sin(elevation) * cos(azimuth))
+        guard roll != 0 else { return level }
+        // Turned about the line of sight: toward screen-right turns the
+        // picture counter-clockwise.
+        let back = SIMD3(cos(elevation) * sin(azimuth), sin(elevation), cos(elevation) * cos(azimuth))
+        let right = simd_cross(level, back)
+        return level * cos(roll) + right * sin(roll)
     }
 
     /// `centerOffset` moves the image's centre — where the target lands — off
@@ -110,8 +120,13 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
     mutating func orbit(deltaPixels: CGSize, viewportSize: CGSize) {
         guard viewportSize.width > 0, viewportSize.height > 0 else { return }
         let sensitivity: Float = 2 * .pi / Float(min(viewportSize.width, viewportSize.height))
-        azimuth -= Float(deltaPixels.width) * sensitivity
-        elevation += Float(deltaPixels.height) * sensitivity
+        // A spun view: undo the spin, so a drag still turns the model the way
+        // the finger moves on screen.
+        let c = cos(roll), s = sin(roll)
+        let dx = Float(deltaPixels.width) * c - Float(deltaPixels.height) * s
+        let dy = Float(deltaPixels.width) * s + Float(deltaPixels.height) * c
+        azimuth -= dx * sensitivity
+        elevation += dy * sensitivity
         elevation = min(max(elevation, -Self.elevationLimit), Self.elevationLimit)
     }
 
@@ -255,6 +270,7 @@ nonisolated enum StandardView: String, CaseIterable, Identifiable, Sendable {
     /// quadrant rather than always 0 so the flight stays short.
     func applied(to camera: TurntableCamera) -> TurntableCamera {
         var cam = camera
+        cam.roll = 0
         switch self {
         case .isometric:
             cam.azimuth = .pi / 5

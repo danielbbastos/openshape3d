@@ -12,7 +12,11 @@ import simd
 /// Indexed triangle mesh in body-local coordinates, ready for GPU upload.
 /// Vertices are welded by (position, normal) so hard edges are preserved.
 nonisolated struct RenderMesh: Sendable, Equatable {
-    var positions: [SIMD3<Float>]
+    var positions: [SIMD3<Float>] {
+        // A new box for the new positions; copies keep theirs. Kernel edges
+        // were read off the old positions, so they go too (back to creases).
+        didSet { aabbMemo = AABBMemo(); kernelEdgeSegments = nil }
+    }
     var normals: [SIMD3<Float>]
     var indices: [UInt32]
     /// Per-vertex texture coordinates (Metal convention: (0,0) is the image's
@@ -27,20 +31,36 @@ nonisolated struct RenderMesh: Sendable, Equatable {
     /// face even though it is coplanar with its neighbour. Every op that
     /// rebuilds the mesh drops it, as it does `texcoords`.
     var faceRegions: [UInt32]? = nil
+    /// The B-rep's own edges as a line list `[a0, b0, a1, b1, …]` of mesh
+    /// vertex positions, present only on a body tessellated from OCCT. When
+    /// present it decides which mesh edges are drawn and pickable, instead
+    /// of the dihedral-angle test: a fillet's tangent edge (no crease) is an
+    /// edge, and a bend between two triangles of one curved face is not.
+    /// Derived from the B-rep, so it is not part of `==` and not persisted.
+    var kernelEdgeSegments: [SIMD3<Float>]? = nil
 
     var triangleCount: Int { indices.count / 3 }
 
     /// Body-local bounding box, used for pick-ray rejection and fit-view.
+    /// Worked out once per set of positions: it is asked for on every tap
+    /// (pick rejection), every scene build (fit bounds) and every frame
+    /// (ground shadows), and a scan's mesh has hundreds of thousands of
+    /// vertices.
     var localAABB: (min: SIMD3<Float>, max: SIMD3<Float>) {
-        guard !positions.isEmpty else { return (.zero, .zero) }
-        var lo = positions[0]
-        var hi = positions[0]
-        for p in positions {
-            lo = simd_min(lo, p)
-            hi = simd_max(hi, p)
+        aabbMemo.value { [positions] in
+            guard !positions.isEmpty else { return (.zero, .zero) }
+            var lo = positions[0]
+            var hi = positions[0]
+            for p in positions {
+                lo = simd_min(lo, p)
+                hi = simd_max(hi, p)
+            }
+            return (lo, hi)
         }
-        return (lo, hi)
     }
+
+    /// `localAABB`'s cache. Not part of the mesh's value (`==` ignores it).
+    var aabbMemo = AABBMemo()
 
     static func == (lhs: RenderMesh, rhs: RenderMesh) -> Bool {
         lhs.indices == rhs.indices && lhs.positions == rhs.positions && lhs.normals == rhs.normals
@@ -266,4 +286,20 @@ nonisolated extension Double {
     /// Safe for `Int(_:)`: non-finite becomes 0, huge magnitudes clamp.
     /// `Int(Double.nan)` and `Int(1e300)` both trap.
     var clampedToInt: Double { MeshQuantize.clampedToInt(self) }
+}
+
+/// A bounding box computed at most once, shared by the copies of one
+/// `RenderMesh` value. Meshes cross threads, so the fill is locked.
+nonisolated final class AABBMemo: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cached: (min: SIMD3<Float>, max: SIMD3<Float>)?
+
+    func value(_ compute: () -> (min: SIMD3<Float>, max: SIMD3<Float>)) -> (min: SIMD3<Float>, max: SIMD3<Float>) {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached { return cached }
+        let box = compute()
+        cached = box
+        return box
+    }
 }

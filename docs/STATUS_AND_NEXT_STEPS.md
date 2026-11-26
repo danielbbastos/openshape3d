@@ -2,7 +2,7 @@
 
 > **Current unfinished-work register:** [Sketch parity open status](SKETCH_PARITY_OPEN_STATUS.md). Maintained at every meaningful checkpoint; older mission logs below are historical.
 
-Last updated: 2026-11-26 (Move / Scale / Rotate Face keep the B-rep on prismatic faces, with the mesh deform as fallback — newest mission log). Before that, 2026-10-27 (scan-to-CAD: SECTIONS — every band's 36 sector medians fitted as an off-axis ellipse (`profile["sections"]`, `profile["roundness"]`), and a body one revolved profile cannot carry built as two-section `feature.loft`s through those ellipses, its cavity lofted into its own body and subtracted once; in the app the barrel 96.5 → 98.0 % (scan→model 7.14 → 2.98 mm) and the pail 95.9 → 97.1 %, the eight round parts unchanged to the digit; build/take limits an hour; 95 tests — newest mission log. Before that, 2026-10-26, later: PASSAGES — a branch's bore that the union filled where the parent is solid is read over the whole scan (`passage_depth` / `passage_record`, to its floor, capped a wall before the parent's far skin; record `bores[j].passage` {depthMM, rMM, floor, capped, seenMM, intoParentMM}) and cut AFTER every union by the build, the film, the reel and the preview (`passage_sections` / `cut_passage`); the valve's largest missing patch 1 015 → 550 mm², scan→model 1.13 → 1.00 mm, the nine other parts unchanged; films and reels re-taken; 78 tests — newest mission log. Earlier the same day: open pipe ends are BORED (`detect_bores` on the main body and every secondary body, folded into the revolve loop by `body_section`; a container's cavity and a collar with a nut in it are not bores), hex/octagon/square NUTS on any axis are built as prisms (`find_nuts` / `nut_sections`), a flat bar that bends is one SWEEP of a designed section along two or three legs (`corner_spine` / `bar_along`, a lever), the CO₂ horn is refitted on its own points and cut hollow; valve scan→model 1.99 → 1.13 mm with its four bores, CO₂ extinguisher 95 → 96 %, the other eight unchanged; films and reels re-taken; 70 tests — newest mission log bullet. Before that, 2026-10-25: the model is painted the scan's own colour (`scanColor` from the texture; spec `"color": "scan"`), the inspection gates on the LARGEST unexplained patch and rings it on the review sheet (`largest_missing_patch` / `largest_excess_patch`), and `fit_features.py` fits designed parts instead of blobs — stadium / rectangle / hexagon / circle outlines, one tube per piece with its horn as a cone, hoops, and part names (hose, horn, lever, nut, lug…) in the captions; a wheel's rim dish no longer reads as an open container (the dish test runs before the open end); CO₂ extinguisher 92 → 95 %, bucket 77 → 96 %, films and reels re-taken. Before that, 2026-10-24: every axis of revolution: `fit_axes.py` finds a scan's axes from its normals and the tracer builds each body on its own axis — the valve goes from 65 % to 95 %, the hydrant's nozzles to 1 mm, the wheel's stand as bars, no more spikes to the apex, a hand-wheel's openings cut; `preview_model.py` rebuilds the model offline; all ten films and both reels re-taken — newest mission log bullet under 2026-10-20. Before that, 2026-10-22, the fidelity pass: the scan trace reads the surface finely, containers get a subtracted cavity, dished parts a traced half-section, and `fit_features.py` / `build_features.py` add the handles, hoses, levers and chains a revolve cannot make — can and bollard PASS, the rest 88–97 % except the out-of-round pail and drum and the two-axis valve; the film and the reel revolve the build's own half-section — all ten corpus films and both reels re-taken on the rebuilt models; scan-to-CAD builds are now inspected both ways with depth maps and a review sheet — `inspect_fit.py`, gating the films and the reel; arcs and hollow revolves in the scan pipeline; a C-clamp rebuilt from recipes to 0.05 mm — the newest mission log bullet under 2026-10-20; a corpus of ten Sketchfab scans built over MCP, graded and filmed; CAD import over MCP: STEP and IGES sew loose faces into solids and sheet bodies, exact bounds, DXF units and ellipses, an open-mesh notice, and agents import STEP / IGES / DXF / FCStd; an OCCT oracle, a live MCP runner and offline XCTests behind it; test pack 36 / 36, FreeCAD IDF + NIST corpus 32 / 32, IGES twins 4 / 4 — newest mission log. Also today: Deviation Preview — the Accuracy Report's colours on the part; the scan's profile straightened; `item.select`) — **Accuracy Report** (one body measured against
+Last updated: 2026-11-26 (Move / Scale / Rotate Face keep the B-rep on prismatic faces, with the mesh deform as fallback — newest mission log). Earlier the same day (the BUILT-IN ASSISTANT, #119: a panel beside the viewport where a person types and Claude builds in the open design on their own API key, on iPad, iPhone, Mac and the web; a notice before a key is saved; `Assistant/`, `UI/AssistantPanelView.swift`, `docs/BUILT_IN_ASSISTANT.md`; tool calls share one path with outside assistants through `AgentLocalCall`, and the bridge's device-only routes moved to `AgentBridgeDevice.swift` so the web engine compiles the rest unchanged; Mac sandbox may now make outgoing connections (#118); bundled modelling guide regenerated (#140) — newest mission log. Before that, 2026-10-27: scan-to-CAD: SECTIONS — every band's 36 sector medians fitted as an off-axis ellipse (`profile["sections"]`, `profile["roundness"]`), and a body one revolved profile cannot carry built as two-section `feature.loft`s through those ellipses, its cavity lofted into its own body and subtracted once; in the app the barrel 96.5 → 98.0 % (scan→model 7.14 → 2.98 mm) and the pail 95.9 → 97.1 %, the eight round parts unchanged to the digit; build/take limits an hour; 95 tests — newest mission log. Before that, 2026-10-26, later: PASSAGES — a branch's bore that the union filled where the parent is solid is read over the whole scan (`passage_depth` / `passage_record`, to its floor, capped a wall before the parent's far skin; record `bores[j].passage` {depthMM, rMM, floor, capped, seenMM, intoParentMM}) and cut AFTER every union by the build, the film, the reel and the preview (`passage_sections` / `cut_passage`); the valve's largest missing patch 1 015 → 550 mm², scan→model 1.13 → 1.00 mm, the nine other parts unchanged; films and reels re-taken; 78 tests — newest mission log. Earlier the same day: open pipe ends are BORED (`detect_bores` on the main body and every secondary body, folded into the revolve loop by `body_section`; a container's cavity and a collar with a nut in it are not bores), hex/octagon/square NUTS on any axis are built as prisms (`find_nuts` / `nut_sections`), a flat bar that bends is one SWEEP of a designed section along two or three legs (`corner_spine` / `bar_along`, a lever), the CO₂ horn is refitted on its own points and cut hollow; valve scan→model 1.99 → 1.13 mm with its four bores, CO₂ extinguisher 95 → 96 %, the other eight unchanged; films and reels re-taken; 70 tests — newest mission log bullet. Before that, 2026-10-25: the model is painted the scan's own colour (`scanColor` from the texture; spec `"color": "scan"`), the inspection gates on the LARGEST unexplained patch and rings it on the review sheet (`largest_missing_patch` / `largest_excess_patch`), and `fit_features.py` fits designed parts instead of blobs — stadium / rectangle / hexagon / circle outlines, one tube per piece with its horn as a cone, hoops, and part names (hose, horn, lever, nut, lug…) in the captions; a wheel's rim dish no longer reads as an open container (the dish test runs before the open end); CO₂ extinguisher 92 → 95 %, bucket 77 → 96 %, films and reels re-taken. Before that, 2026-10-24: every axis of revolution: `fit_axes.py` finds a scan's axes from its normals and the tracer builds each body on its own axis — the valve goes from 65 % to 95 %, the hydrant's nozzles to 1 mm, the wheel's stand as bars, no more spikes to the apex, a hand-wheel's openings cut; `preview_model.py` rebuilds the model offline; all ten films and both reels re-taken — newest mission log bullet under 2026-10-20. Before that, 2026-10-22, the fidelity pass: the scan trace reads the surface finely, containers get a subtracted cavity, dished parts a traced half-section, and `fit_features.py` / `build_features.py` add the handles, hoses, levers and chains a revolve cannot make — can and bollard PASS, the rest 88–97 % except the out-of-round pail and drum and the two-axis valve; the film and the reel revolve the build's own half-section — all ten corpus films and both reels re-taken on the rebuilt models; scan-to-CAD builds are now inspected both ways with depth maps and a review sheet — `inspect_fit.py`, gating the films and the reel; arcs and hollow revolves in the scan pipeline; a C-clamp rebuilt from recipes to 0.05 mm — the newest mission log bullet under 2026-10-20; a corpus of ten Sketchfab scans built over MCP, graded and filmed; CAD import over MCP: STEP and IGES sew loose faces into solids and sheet bodies, exact bounds, DXF units and ellipses, an open-mesh notice, and agents import STEP / IGES / DXF / FCStd; an OCCT oracle, a live MCP runner and offline XCTests behind it; test pack 36 / 36, FreeCAD IDF + NIST corpus 32 / 32, IGES twins 4 / 4 — newest mission log. Also today: Deviation Preview — the Accuracy Report's colours on the part; the scan's profile straightened; `item.select`) — **Accuracy Report** (one body measured against
 another: orthographic silhouette overlays per view, outline and surface
 deviation both ways; `Kernel/AccuracyKit.swift`, Views ▸ Accuracy Report…,
 `/v1/accuracy` + `/v1/accuracy/image`, MCP ops `accuracy` /
@@ -61,192 +61,391 @@ flaw until a6fea315). Draft was already exact (`OCCTKernel.draftResult`, the
   nodes replay with `body.brep` valid). A tilt is not volume-preserving: the
   face turns rigidly, so a 10 mm cube tilted θ is 500·(1 + cos θ).
 
-## Mission log — 2026-11-21, view cube double-tap, look at a face, flat sketch view, Mirror across a face
+## Mission log — 2026-11-26, B-rep edges instead of mesh creases
 
-Four user-facing gaps reported while driving the app over MCP:
+Report: after a fillet, its edges could not be selected, and a long fillet
+along a curve showed zig-zag lines. Both came from one rule: drawn edges
+(`FeatureEdgeExtractor`) and pickable edges (`EdgeTopology.selectableEdges`)
+were the mesh edges where two triangles meet at more than 20°. A fillet
+meets its neighbours tangentially (0°), so its edges were neither; thin
+triangles on a curved fillet sometimes passed 20°, so stray lines showed.
+Live check: a 20×20×10 block with one 4 mm fillet had 15 kernel edges, 2
+with no line and no pick.
 
-- **Orientation cube double-tap.** The tap recognizer waits for the
-  double-tap to fail, and `gestureDoubleTapped` went straight to the model,
-  so a quick double-tap on the cube did nothing. It now snaps to the face /
-  edge / corner under it, like a single tap (`ViewportView.gestureDoubleTapped`).
-- **View commands with the window hidden.** `CameraAnimator` runs on a
-  `CADisplayLink`, which does not fire while the app is in the background or
-  its Mac window is covered — `view.top` over MCP reported success and left
-  the camera where it was. A fallback lands the flight at its end pose if it
-  has not finished `duration + 0.25 s` after it started.
-- **Double-tap a planar face or a construction plane** turns the camera
-  head-on to it (spec §7.1 "zoom to face"); a body double-tap still selects
-  as before, a curved face only selects (`handleDoubleTap`).
-- **Flat sketch view** (Settings ▸ Sketch View, both default ON):
-  *Flat View While Sketching* switches to orthographic while a sketch is
-  open and restores the previous projection when it closes;
-  *Hide Model in Front of Sketch* clips the model on the camera's side of
-  the sketch plane (a section clip 0.01 mm in front of the plane, caps filled
-  0.02 mm behind it so the sketch draws on top). No cut when nothing lies
-  behind the plane — sketching on the ground under a part never erases the
-  part (`EditorViewModel.keptSide` / `sketchCut`, `SketchViewCutTests`).
-  Driven by `mode`'s `didSet` (`sketchViewChanged`), so every way in and out
-  of a sketch is covered.
-- **Mirror.** The palette Mirror works on any selection (was exactly one
-  body), offers **Pick a Face or Plane…** (new `EditorMode.pickingMirrorPlane`
-  — world/construction plane tiles or any planar face, Cancel on the status
-  pill) and a **Keep Originals** toggle (off = the sources are removed in the
-  same undo step; the history node records `keepOriginal: false`). The
-  catalog's `transform.mirror` ("Mirror Bodies") was never routed — it now
-  arms the face/plane pick, so Command Search and MCP `commands` list it.
+- **`RenderMesh.kernelEdgeSegments`**: the B-rep's edges as a line list of
+  mesh vertex positions, read from each edge's polygon on its face
+  triangulation (`OCCTBridge edgeSegmentsOfShape:`), so every segment is a
+  mesh edge. Seams and degenerate edges are left out. Set in `adoptBRep`
+  when nearly every endpoint is a mesh vertex
+  (`RenderMesh.matchingKernelEdges`); cleared when `positions` is set. Not
+  persisted and not part of `==`.
+- **When present it decides** what is drawn (`FeatureEdgeExtractor`) and
+  picked (`selectableEdges`: kernel mesh edges, any angle). The select-mode
+  edge tap (`tapIsNearBodyEdge`) skips its 45° filter for such bodies; a
+  tap on a curved wall still means the wall. Mesh-only bodies keep the
+  crease rule.
+- **Reopened documents**: the stored B-rep has no triangulation, so
+  `DocumentSession.scheduleLoadKernelEdges` tessellates a mesh-free copy
+  off the open path and attaches the edges to bodies whose stored mesh they
+  match (new revision, so the renderer uploads them).
+- Tests: `KernelEdgeTests` (box keeps 12 edges, a fillet's 2 tangent edges
+  pick, a cylinder draws only its rims, off-mesh segments refused, a
+  reloaded B-rep finds the same edges).
 
-**Older toolchains.** This Mac has Xcode 26.0.1 (Swift 6.2), which fails to
-type-check several expressions the project's Xcode 26.6 accepts. Split, with
-no behaviour change: `DrawingProjection` probes, `DrawingSheet` boxed-label
-corners, `CatmullRomBezier` tangents, `aimedConstraints` (an `Angle`
-overload), `DrawingSheetView` sheet layout, `SketchDimensionOverlay`'s label
-builder (now `labelLeaders` / `labelBadge` / `radiusLockBadge` /
-`valueButton` / `valueText` / `distanceTypeMenu`), `EditorView.viewportChrome`
-and `editorContent` (now staged modifier functions), and two test files
-(`SweepLoftTests`, `BlendImportTests`). The Section/Mirror status pills share
-one branch (`planePickPrompt`). Building there also needs
+Follow-ups the same day, from testing on an iPad:
+
+- **Faces stop at kernel edges** (`FaceTopology.smoothRegion`): the flat
+  face beside a fillet is flat, and the fillet is its own face. The flood
+  used to cross the tangent edge and call the flat face curved, which also
+  refused the edge tap beside it.
+- **Tap a blend to resize it**: a tap on a fillet's round, a chamfer's
+  bevel, or a fillet's tangent edge reopens that feature
+  (`FeatureGraph.blendFeature(forBody:facePoints:)`: every point of the face
+  within the blend's size of an edge it replaced). Applying it at zero
+  deletes the feature, so the edge is sharp again.
+- **Fillet or chamfer by drag**: an edge picked off the body starts at size
+  0; the arrow's drag is a signed size, toward the body a chamfer, away a
+  fillet, crossing zero freely until applied (`blendKindOpen`,
+  `blendSignedSize`). Typing a size keeps the kind showing.
+- **Drag clamps for chamfers too**: `OCCTKernel.maxChamferDistance`, the
+  fillet cap's bisection over real builds generalised
+  (`OS3DBlendBuilds`/`OS3DMaxBlendSize`), so the arrow stops at the largest
+  setback instead of running into "too large for the local geometry".
+- **Ghost of the shape before the edit**, translucent and depth-biased back
+  (`BodyDrawable.isGhost`) so only what it adds shows; never picked.
+- **Editing a blend previews the whole history** (`DocumentSession.previewBodies`,
+  a dry run against a copy of the memo): later features (a chamfer after the
+  fillet) stay on screen.
+- **A tap in empty space finishes a blend** (applies, or leaves).
+- **Two-finger pan no longer jumps on release** (`TwoFingerPanTracker`): a
+  finger lifting moved the reported centroid, and the camera with it.
+- Tests: `BlendFaceLookupTests`, `BlendDragKindTests`, `BlendDragCapTests`,
+  `TwoFingerPanTrackerTests`, `KernelEdgeTests.testAFilletIsItsOwnFace`. UI
+  tests were run for the fillet-face and edge changes (nothing newly
+  failing); not rerun after the drag, ghost and chamfer-cap changes.
+
+## Mission log — 2026-11-25, undo stalls on a large model
+
+Report: face → Sketch → a line → Undo took seconds, with a busy cursor.
+Undo itself is ~10 ms; `sample` on the simulator with a 204k-triangle mesh
+in the document showed the main thread in two other places:
+
+- **Autosave** (2 s after every change) re-encoded every body's mesh and
+  B-rep (`MeshBlob.encode`, `OCCTKernel.serialize`): ~800 ms in Debug for
+  a sketch line. `DocumentSession.savedGeometry` now remembers what each
+  row last received this session; a body whose mesh, B-rep and primitive
+  match (`SavedGeometry.matches`: array storage identity, so free when
+  unchanged) only rewrites its cheap columns. Reset on load. → ~9 ms.
+- **`RenderMesh.localAABB`** walked every vertex each call — per scene
+  build (`ViewportScene.worldBounds`, 50–100 ms each, several per change),
+  per tap (`HitTester`) and per frame (ground shadows). Now memoised in an
+  `AABBMemo` box replaced whenever `positions` is set; copies share it,
+  `==` ignores it.
+
+- **The error-badge replay after undo/redo** (`refreshEvalErrors`) was the
+  big one on a real model: 6.8 s on the Mac (Debug) for one undo. It ran the
+  whole graph against a COPY of the memo, and the memo is empty after
+  opening a document until the first live rebuild, so every undo re-ran
+  every feature through OCCT, even for a sketch line no feature reads.
+  `FeatureGraph.evalInputsKey` fingerprints what a replay reads (every node,
+  the rollback marker, the sketches and planes the nodes reference, as the
+  memo sees them); `lastEvalErrorsKey` remembers the key the badges were
+  computed for (rebuild, load refresh, undo refresh), and an unchanged key
+  skips the replay. The load-time refresh also keeps its result when an
+  edit landed meanwhile but the key still matches. `EvalInputsKeyTests`.
+- **The first feature edit after opening** replayed the whole history too,
+  because the memo started empty. The open-time badge replay already builds
+  a full memo in the background; it is now adopted (`adoptLoadEvalResult`)
+  when no live rebuild warmed the memo first, the inputs key still matches,
+  and every replayed body matches the stored one (triangle count, vertex
+  count, bounds within 1e-3 mm; `replayMatchesDocument`) — a document
+  whose stored meshes differ still gets today's full first rebuild, which
+  repairs them. Its scratch revisions start at 2^62
+  (`scratchRevisionBase`) so a memo snapshot never shares a revision with a
+  real body. Simulator, 16-feature part (12 OCCT unions), reopened: first
+  new feature 2.4 s → 0.03 s.
+
+`SaveAndBoundsCacheTests` pins the first two. Not done: `save()` still runs on the
+main actor and encodes all sketches; the first save after opening a
+document still encodes every body once.
+
+## Mission log — 2026-11-25, Euclid 0.10.7 instead of the vendored copy
+
+Euclid is a package again (`XCRemoteSwiftPackageReference`, **exactly
+0.10.5** — 0.10.6 and 0.10.7 fail to build for Mac Catalyst: `Euclid+ModelIO.swift`
+calls AppKit's `NSImage.cgImage(forProposedRect:…)` under `#if canImport(AppKit)`,
+which is true on Catalyst; 0.10.5 predates that code and already removes the
+slivers); `ThirdParty/Euclid` (0.8.18 + one patch, 17.6k lines)
+is gone. A standalone program using only Euclid reproduced the
+`makeWatertight` → `capPolygons` assertion on stock 0.8.18 and ran clean on
+0.10.6 and 0.10.7: since 0.9/0.10 `makeWatertight` removes overlapping
+slivers before capping, so the sliver holes never reach the fan fallback.
+That fallback still calls `Polygon(unchecked:)` (0.10.7 `Mesh.swift:508`);
+worth a one-line upstream report. No source changes were needed;
+`SubtractCrashTests` pass on 0.10.7 unpatched.
+
+## Mission log — 2026-11-24, Measure: all of spec §16.3
+
+Measure rebuilt to the whole of spec §16.3 (now ✅):
+
+- **Panel** (`UI/MeasurePanel.swift`) replaces the status pill: draggable
+  (position kept), Measure menu, Include X, Y, Z Deltas
+  (`AppSettings.measureDeltas`, off), Pin to Always Show / Pinned. Opens on
+  **Object Measurements**; the point UI tests pick their type first.
+- **Engine** (`Kernel/MeasureQuery.swift`, `MeasureItems.swift`): picks →
+  world-space `MeasureItem`s → rows. Exact via two new bridge calls,
+  `measureGeometry` (face / edge kind, area, length, centre of gravity) and
+  `minimumDistance` (`BRepExtrema_DistShapeShape`), plus
+  `nearestFaceIndex` (tap → kernel face). The B-rep is moved to world space
+  first; `MeasureQueryTests.testAMovedBodyKeepsItsFaceNumbering` pins that a
+  transform keeps the kernel numbering.
+- **Notable points** (`Kernel/MeasureNotablePoints.swift`): kernel corners,
+  edge middles, circle centres (cached per body revision and placement),
+  face centre under the pointer; drawn as hints; placed points drag.
+- **Pins**: any row (`PinnedMeasurement.kind == .row`, optional fields, old
+  documents decode). An app older than this reads a document with a row
+  pin as having no pins (the array fails to decode as a whole).
+- **Info bar** uses the same rows (memoised per selection, since a minimum
+  distance is a kernel call). Two selected bodies add Minimum / Central
+  distance after Selected / Bounds (`SelectionUXTests` updated).
+- **Agent**: command `view.measure`; MCP op `measure` → `POST /v1/measure`
+  (`AgentMeasureItem`), documented in the model-openshape3d skill.
+
+**Follow-up the same mission (2026-11-25):** Shift-click a second face for
+a quick face-to-face reading in the info bar (`handleQuickFaceMeasure`,
+before Shift's extend-selection path); pins re-measure their items
+(`PinSource`, `livePin`, cached per `session.changeCount`), finding a face
+or edge again by a point ON it in body coordinates — `measureGeometry` now
+returns 20 doubles, adding a point on the face nearest its centroid (an
+annulus's centroid is in its hole) and an edge's arc-length middle; rows
+carry `refs`, so highlighting tints the exact items; the phone sheet
+(`MeasurePanel(compact:)`). The notable-point picker now prefers the point
+nearer the eye when two lie equally close to the ray (a corner straight
+behind another used to win by list order). Tests in `SelectionUXTests`
+(quick distance, pins following a move and an undo, a point pin riding on
+its body) and `MeasureQueryTests` (row refs, a face's on-face anchor).
+Phone layout checked live on the iPhone 15 Pro simulator. Gotcha: inside a
+`ScrollView`, iOS 26's scroll edge effect faded the panel's first rows —
+the sheet only scrolls once its rows outgrow 40 % of the screen.
+
+**Known, not from this work:** `MeasureUITests.testFaceSelectionShowsAreaInInfoBar`
+and `testSeededBoxReportsExactGeometryValues` fail on this Mac's iPad
+(A16) iOS 26.0 simulator on `chore/xcode-26.0-build` too (main + build
+fixes): the idle face tap at (0.5, 0.35) selects no face there.
+
+## Mission log — 2026-11-21…23, sketch view: starting a sketch, flat view while sketching
+
+Checked against the reference documentation on sketch planes (intro and
+both "How to start a sketch" tabs). Its section on organizing sketches has
+NOT been seen.
+
+**Starting a sketch** (spec §2.3), from the article:
+- Sketch shows the three origin rectangles at once (the flyout beside them
+  picks a tool first); tap or double-tap one. They win the tap over a body,
+  being drawn over it (`sketchTarget`).
+- While they are up, the grid follows the rectangle under the pointer
+  (`hoveredSketchTile`; spec "grid auto-follows the hovered plane").
+- A finger double-tap on the grid, a planar face or a construction plane
+  starts a sketch there (`startSketchFromFingerDoubleTap`; off in Select
+  mode, where a double-tap selects the body). A mouse or Pencil double-click
+  still gives the plane view.
+- Pointer: hover + Space starts on what is under the pointer, rectangles
+  included while shown (the chosen tool is kept).
+- A cube face or named view chosen while the rectangles are up starts the
+  sketch on that plane.
+- Normal to Sketch (was "Look at Sketch") returns to the 2D normal view after
+  rotating; the button id is still `LookAtSketch`, and UI tests find it by id.
+
+Inferred, NOT confirmed against the reference: Sketch skips the rectangles while still
+head-on to a plane a view just defined; the grid fallback is that plane.
+
+**Flat view while sketching** (Settings ▸ Sketch View, both default ON):
+*Flat View While Sketching* switches to orthographic while a sketch is open
+and restores the previous projection when it closes; *Hide Model in Front of
+Sketch* clips the model on the camera's side of the sketch plane (the plane
+view's cut). Driven by `mode`'s `didSet` (`sketchViewChanged`), so every way
+in and out of a sketch is covered. Orbiting more than 10° off mid-sketch
+lifts the cut and the flat projection; Normal to Sketch brings them back,
+cutting toward wherever the camera now is (`sketchFlat`, our inference).
+
+**Same-plane sketches are NOT reused.** PARITY_SPEC §2.3 says continuing on
+the same plane right after edits the same sketch, but upstream chose
+otherwise on purpose (`beginSketch`: "geometric coincidence alone is not
+document identity", pinned by
+`SketchIdentityTests.testNewCoplanarEntryKeepsSeparateOwnershipAndUndo`).
+Left as is until the article's second section settles it.
+
+**Tests.** UI tests now select bodies with `selectBody` (Select mode), since
+a finger double-tap sketches. Known same tile-vs-body bug, not fixed: Section
+View, Split and Insert Image draw plane tiles over the model but let the
+body behind win the tap.
+
+**UI tests failing on untouched upstream 0bb77eb9** (iPad Air 11" M2, iOS
+26.0.1, Xcode 26.0.1), full run 2026-11-23 excluding LiveSend, BugReport,
+WebHandoff, SlicerExport, *Take*, VideoSimSetup: 32 failures — Blend
+ChamferTwoEdgesInOneFeature; Clipboard TutorialMode; ConstraintRail ×2;
+Dimension ×4 (several can't find SettingsButton); Drawing Sheets; FaceFlow
+×3; ImportPicker; Items PlaneRowSelects; KeyboardShortcuts Recorded;
+Material Steel; Measure ×2; ParityWalkthrough 03 and 07; Planes
+SketchOnFaceThenExtrude; SectionDisplay XRay; SelectionExtension ClickAdds;
+RectangleWorkflow GalleryReopened; SketchEdit EndpointDrag; Settings ×7.
+
+## Mission log — 2026-11-21…23, plane view: the cube, named views, a double-clicked face
+
+The reference documentation on sketch planes lists the cube and Views as ways
+to define a sketch plane; spec §7.2 says a cube face click "enters the 2D
+planar view (rotation arrows appear above the cube to spin the plane in 90°
+steps)" and a double-click resets to the default view.
+
+- **True plan views.** The turntable's fixed Y-up look-at degenerated at the
+  pole, so Top was clamped to 89° and still showed slanted slivers of every
+  tall wall. The view matrix now takes screen-up from the orbit angles
+  (`TurntableCamera.up`, equal to the old Y-up result off the pole) and
+  `elevationLimit` is 90°.
+- **Cube faces and named views** (`enterStandardPlaneView`): the origin
+  plane facing the eye becomes the sketch plane (`workPlane`, the grid moves
+  onto it) and the view turns orthographic and flat. Nothing is cut; the view
+  names a direction. Orbiting more than 10° off ends it and restores the
+  projection (`SketchPlaneNavigation.FlatTracker`). Edges, corners and
+  Isometric define no plane.
+- **Spin arrows.** While such a view is up, two arrows under the cube (the
+  spec says above; moved under on user review) turn
+  the picture 90° about the line of sight (`TurntableCamera.roll`,
+  `spinPlaneView`). Orbiting keeps the spin with drags mapped to the screen;
+  named views, cube snaps and head-on flights stand it upright again.
+- **Cube double-tap** resets to the default view (Views ▸ Isometric). It
+  used to fall through to the model.
+- **Double-click a planar face or a construction plane**: it becomes the
+  sketch plane and the camera turns head-on in a flat projection with the
+  part on the camera's side cut away, so the far side shows projected onto
+  the plane (`enterPlane`, `beginPlaneView(cut: true)`, caps filled like
+  Section View; `keptSide` / `sketchCut`, `SketchViewCutTests`). No cut when
+  nothing lies behind the plane. A curved face only selects.
+- **Views ▸ Reset View & Grid** (`view.resetViewAndGrid`): the home view,
+  the grid back on the ground, no plane defined.
+- The sketch-plane grid gets a small depth bias so it wins over the face it
+  lies on instead of flickering with it.
+
+Inferred, not confirmed against the reference: named views flatten and use the plane
+through the origin with no cut; the grid stays on the defined plane after
+orbiting. The spin arrows show for named views as well as cube faces.
+
+**Open:** hidden-line display in the flat view; the cube's right-click
+menu (Default View, Top View, Zoom to Fit); edge hits on the cube.
+
+## Mission log — 2026-11-21, Mirror: any selection, a picked plane, sketches, nothing selected
+
+**Bodies.** The palette Mirror works on any selection (was exactly one
+body), offers **Pick a Face or Plane…** (`EditorMode.pickingMirrorPlane`:
+world/construction plane tiles or any planar face, Cancel on the status
+pill) and a **Keep Originals** toggle (off = the sources are removed in the
+same undo step; the history node records `keepOriginal: false`). The tiles
+are drawn over the model, so a tap on one wins over a body behind it. The
+catalog's `transform.mirror` ("Mirror Bodies") was never routed; it now
+starts Mirror, so Command Search and MCP `commands` list it. The Section
+and Mirror status pills share one branch (`planePickPrompt`).
+
+**Sketch Mirror.** `mirrorSketchSelection` / `MirrorSketchEntitiesCommand`
+(mirror copies + live `.symmetric` links) had no UI. The sketch palette now
+has **Mirror**: select shapes, tap Mirror, tap any line to mirror across
+(`beginSketchMirror` / `completeSketchMirrorPick`; the tapped line is the
+axis even if it was in the selection; the copies end up selected; Cancel
+Mirror on the pill, or Undo, leaves). Clicking a corner selects a POINT; its
+entity now counts (`sketchMirrorSourceIDs`). Rectangles get no symmetric
+link (their corners re-sort); across a SLANTED line a rectangle now comes
+back as its four reflected sides (it used to be a wrong box built from two
+reflected corners).
+
+**Sketch shapes in 3D.** Clicking inside a closed shape in the model view
+picks the region (and opens Extrude). Transform ▸ Mirror now takes that
+region (its `Profile.sourceEntityIDs`), or sketch lines picked with Select,
+and mirrors them in 3D across a face or plane like a body: the same menu,
+Pick a Face or Plane…, Keep Originals (`modelSketchMirrorTarget` /
+`mirrorSketchShapes`, geometry in `Kernel/SketchPlaneMirror.swift`,
+`SketchPlaneMirrorTests`). A mirror plane at right angles to the sketch puts
+the copy in the same sketch (mirrored across the line where the planes
+meet); any other plane makes a new sketch on the reflected plane.
+
+**Nothing selected**. The Mirror button is live with an empty
+selection: it asks "Choose a body or shape to mirror"
+(`EditorMode.pickingMirrorSource`), the tap picks the nearest body or closed
+sketch shape, then the "Choose a face or plane to mirror across" step
+mirrors it (`beginMirror` / `handleMirrorSourcePick`). With a selection the
+button still opens the Mirror menu. The pick takes the smallest thing under
+the tap: a sketch shape drawn on a body's face sits at the face's depth and
+wins the near-tie with the body, and it is outlined while the plane is
+chosen.
+
+**Verified** on the simulator: the Step's front face → "Step 2" at z 5…15,
+1800 mm³; Keep Originals off + YZ → one body, one Undo restores it; a 10×8
+rectangle at u 5…15 mirrored across the u = 0 line to −15…−5; a ground
+triangle → Transform ▸ Mirror ▸ YZ Plane → copy at −5…−15 in the same
+sketch; nothing selected: a rectangle on the step's top face, mirrored
+across the front face (z = 5) → copy at z 7…13, same sketch.
+
+**Open:** face-selection mirror (spec §5.6), the blue/purple Mirror badges,
+a UI test for each flow.
+
+## Mission log — 2026-11-23, quick viewport taps were dropped
+
+The single-tap recognizer required the double-tap recognizer to fail, and a
+tap that landed while it waited was dropped. Quick taps in different places
+(sketch points ~0.45 s apart) went missing.
+`SplineUITests.testClosedControlSplineIsAnExtrudableProfile` failed about 2
+runs in 5 that way: a three-point spline's curve passed within the pick
+tolerance of the centre, so the extrude tap selected the curve. Now one tap
+recognizer feeds `TapSequencer` (Interaction/), which delivers every tap and
+treats two taps within 0.35 s and 44 pt as a double-tap at the first point.
+A lone tap still waits out that window, as before. `TapSequencerTests`
+covers it; the spline test passed 8 of 8 afterwards.
+
+## Mission log — 2026-11-21, view commands with the window hidden
+
+`CameraAnimator` runs on a `CADisplayLink`, which does not fire while the
+app is in the background or its Mac window is covered: `view.top` over MCP
+reported success and left the camera where it was. A fallback lands the
+flight at its end pose if it has not finished `duration + 0.25 s` after it
+started; a counter keeps a late fallback from landing a superseded flight.
+
+## Mission log — 2026-11-21, building with Xcode 26.0.1
+
+Xcode 26.0.1 (Swift 6.2) fails to type-check several expressions that
+Xcode 26.6 accepts. They are split up here, with no behaviour change:
+`DrawingProjection` probes, `DrawingSheet` boxed-label corners,
+`CatmullRomBezier` tangents, `aimedConstraints` (explicit `Double`s; an
+`Angle` overload was picked), `DrawingSheetView` sheet layout,
+`SketchDimensionOverlay`'s label builder (now `labelLeaders` / `labelBadge` /
+`radiusLockBadge` / `valueButton` / `valueText` / `distanceTypeMenu`),
+`EditorView.viewportChrome` and `editorContent` (now staged modifier
+functions), and two test files (`SweepLoftTests`, `BlendImportTests`).
+Building there also needs
 `OTHER_SWIFT_FLAGS='$(inherited) -Xfrontend -solver-scope-threshold=50000000'`,
 Git LFS for `ThirdParty/OCCT.xcframework`, and, for tests on a 26.0
 simulator, `IPHONEOS_DEPLOYMENT_TARGET=26.0`.
 
-**Verified** on an iPhone 15 Pro simulator over the bridge (port 8799):
-cube tap → Top; `view.isometric` / `view.fit`; double-tap the Step's side
-face → head-on Right; Line on the XY tile → orthographic, front half cut
-away with the step profile filled; Exit Sketching → perspective, whole
-part; Mirror ▸ Pick a Face… on the front face → "Step 2" at z 5…15, 1800 mm³;
-Keep Originals off + YZ → one body, one Undo restores it. Unit: the focused
-classes 138/138; the full unit run passes except three not touched here —
-`AgentMCPTests.testBundledGuideIsTheSkillBody`,
-`HeavyMeshGuardTests.testHeavyMeshBodiesAreNotBooleanCandidates` (the
-locale's thousands separator), and a malloc crash in
-`SpaceMouseTests.testDriverRoutesMotionAndPressesToTheTarget` that
-reproduces alone. UI tests were not run.
+## Mission log — 2026-11-22, symmetric-subtract crash
 
-**Sketch Mirror** (added the same day). `mirrorSketchSelection` /
-`MirrorSketchEntitiesCommand` (mirror copies + live `.symmetric` links) had
-no UI at all. The sketch palette now has **Mirror**: select shapes, tap
-Mirror, tap any line to mirror across (`beginSketchMirror` /
-`completeSketchMirrorPick`; the tapped line is the axis even if it was in
-the selection; the copies end up selected; Cancel Mirror on the pill, or
-Undo, leaves). Verified on the simulator: a 10×8 rectangle at u 5…15
-mirrored across the u = 0 line to −15…−5. Rectangles get no symmetric link
-(their corners re-sort — see the command); across a SLANTED line a
-rectangle now comes back as its four reflected sides (it used to be a wrong
-box built from two reflected corners).
+A symmetric Extrude subtract died on a Euclid assertion (`makeWatertight` →
+`capPolygons`, a zero-area fan triangle). Three faults, all fixed:
 
-Two ways people "select a shape" never reached Mirror: clicking a corner
-selects a POINT (its entity now counts — `sketchMirrorSourceIDs`), and
-clicking INSIDE a closed shape in the model view picks the REGION and opens
-Extrude. In the model view, Transform ▸ Mirror now takes that region (its
-`Profile.sourceEntityIDs`), or sketch lines picked with Select, and mirrors
-them IN 3D across a face or plane like a body — the same menu, Pick a Face
-or Plane…, Keep Originals (`modelSketchMirrorTarget` /
-`mirrorSketchShapes`, geometry in `Kernel/SketchPlaneMirror.swift`,
-`SketchPlaneMirrorTests`). A mirror plane at right angles to the sketch
-puts the copy in the same sketch (mirrored across the line where the planes
-meet); any other plane makes a new sketch on the reflected plane. An earlier
-version opened the sketch instead, which also switched on the flat sketch
-view — wrong for a 3D mirror (user report). Verified: click inside a ground
-triangle → Transform ▸ Mirror ▸ YZ Plane → copy at −5…−15 in the same
-sketch, still in the model view, one Undo step.
+- **Hidden bodies were tool targets**: `BooleanCandidacy.toolTargets`.
+- **A cut through several bodies always went to mesh CSG**, degrading solids
+  and recording no history. Each body with history now gets its own node in
+  one undo step; other solids are cut by `ExtrudeCutKit` (OCCT).
+- **The assertion**: Euclid 0.8.18 was vendored in `ThirdParty/Euclid` with a
+  one-line patch (replaced 2026-11-25 by Euclid 0.10.7, which no longer
+  reaches it — see that mission log). As that alone
+  could commit a torn mesh, Extrude and Combine refuse a mesh result opened
+  wider than 1e-3 mm (`MeshSeamKit`). Do NOT use `isWatertight` for this:
+  about half of ordinary cuts on Float-stored meshes fail it on 1e-7 cracks.
 
-**Plane view** (Shapr3D, user request). Double-clicking a construction
-plane, a planar face or a face of the orientation cube now also flattens the
-view: orthographic, head-on, and — for a plane or face that runs through the
-model — the part on the camera's side cut away (the same clip and caps as
-the flat sketch view), so the far side shows projected onto the plane. A
-cube face names a direction, not a place, so it only flattens. Orbiting away
-(over 10° off head-on, once the flight has landed) restores the projection
-and the whole model; opening a sketch takes over from it
-(`EditorViewModel.PlaneView`, `beginPlaneView` / `endPlaneView` /
-`planeViewCameraMoved`; the viewport reports each camera move). Verified on
-the iPad simulator with the stepped block: double-tap the low step's top
-face (y = 6) → top view, flat, tall half cut at y = 6; orbit → perspective,
-whole part; double-tap the cube's Front → flat front profile.
-True plan views: the turntable used to stop Top / Bottom at ±89° because its
-fixed Y-up look-at degenerates at the pole, so a "flat" top view still showed
-slanted slivers of every tall wall (reported on a real part). The view
-matrix now takes screen-up from the orbit angles (`TurntableCamera.up`, equal
-to the old Y-up result off the pole) and `elevationLimit` is 90°.
+Pinned by `SubtractCrashTests`. Verified on the iPad simulator: symmetric
+subtract over two solids with a hidden third → 1100 → 1010 mm³ each, still
+B-rep, hidden body untouched, one-step undo/redo.
 
-**Mirror with nothing selected** (Shapr3D, user request). The Mirror button
-is live with an empty selection: it asks "Choose a body or shape to mirror"
-(`EditorMode.pickingMirrorSource`), the tap picks the nearest body or closed
-sketch shape, then the usual "Choose a face or plane to mirror across" step
-mirrors it (`beginMirror` / `handleMirrorSourcePick`). With a selection the
-button still opens the Mirror menu. Verified on the iPad simulator: the
-stepped block across its end face → copy at x 10…30; a ground triangle at
-x −30…−16 across the same face → copy at x 36…50 in the same sketch.
-The pick takes the smallest thing under the tap: a sketch shape drawn on a
-body's face sits at the face's depth and wins the near-tie with the body
-(it used to lose, so a rectangle on a face could never be picked), and it is
-outlined while the plane is chosen. Verified: a rectangle on the step's top
-face, mirrored across the front face (z = 5) → copy at z 7…13, same sketch.
-
-**Using sketch planes** (spec §2.3). Checked against screenshots of the help
-article's intro and both "How to start a sketch" tabs, supplied by the user.
-Its second section ("How Shapr3D organizes your sketches") has NOT been seen.
-
-From the article:
-- A plane is defined by selecting a plane / face first, the cube, or Views.
-- Sketch shows the three origin rectangles at once (the flyout beside them
-  picks a tool first); tap or double-tap one. They win the tap over a body,
-  being drawn over it.
-- Finger double-tap on the grid, a planar face or a construction plane starts
-  a sketch there.
-- Pointer: hover + Space starts on what is under the pointer, rectangles
-  included while shown (the chosen tool is kept).
-- Normal to Sketch returns to the 2D normal view after rotating (button id
-  still `LookAtSketch`; UI tests find it by id, never by label).
-
-From the user's description of Shapr3D, not the article:
-- A double-click on a plane / face gives a flat projection with the near side
-  cut away (mouse and Pencil here; a finger gets the same view in the sketch).
-- Double-click on a cube face snaps to it (PARITY_SPEC §7.2 says "reset").
-
-Our inferences, NOT confirmed in Shapr3D. Don't cite these as parity:
-- Cube faces / named views flatten, use the plane through the origin, no cut.
-- Sketch skips the rectangles while still head-on to such a plane.
-- The grid stays on that plane after orbiting (`workPlane`); Reset View &
-  Grid or Grid Position clears it. A picked rectangle doesn't move the grid.
-- Orbiting mid-sketch lifts the cut and the flat projection.
-- A finger selects a whole body via Select mode (double-tap there), since
-  double-tap now sketches.
-- Each entry makes a new sketch, though PARITY_SPEC §2.3 says continuing on
-  the same plane edits the same one.
-
-Fixed 2026-11-23, lost viewport taps (pre-existing): the single-tap
-recognizer required the double-tap recognizer to fail, and a tap that landed
-while it waited was dropped. Quick taps in different places (sketch points
-~0.45 s apart) went missing. SplineUITests.testClosedControlSplineIsAnExtrudableProfile
-failed 2 of 5 on 9e54f0fb that way: a three-point spline's curve passed
-inside the pick tolerance of the centre, so the extrude tap selected the curve.
-Now one tap recognizer feeds `TapSequencer` (Interaction/), which delivers
-every tap and makes two taps within 0.35 s and 44 pt a double-tap at the first
-point. The spline test passed 8 of 8 afterwards; `TapSequencerTests` covers it.
-
-Known same bug, not fixed: Section View, Split and Insert Image also draw
-plane tiles over the model but let the body behind win the tap (Sketch and
-Mirror are fixed).
-
-**UI tests failing on untouched upstream 0bb77eb9** (iPad Air 11" M2, iOS
-26.0.1, Xcode 26.0.1; identical failures with and without this branch):
-Blend ChamferTwoEdgesInOneFeature; Dimension CircleDiameterDimensionDrives,
-CircularAnnotationPreference, FreshAlwaysRadiusReadout, ImperialKeypad
-(three of these can't find SettingsButton); Items PlaneRowSelects;
-ParityWalkthrough 03 and 07; Planes SketchOnFaceThenExtrude; SectionDisplay
-XRay; SelectionExtension ClickAdds; RectangleWorkflow GalleryReopened;
-Settings UnitSwitchRelabels. Full run 2026-11-23 (excluding LiveSend,
-BugReport, WebHandoff, SlicerExport, *Take*, VideoSimSetup): 32 failures,
-all also failing on upstream — Clipboard TutorialMode; ConstraintRail x2;
-Drawing Sheets; FaceFlow x3; ImportPicker; KeyboardShortcuts Recorded;
-Material Steel; Measure x2; SketchEdit EndpointDrag; Settings x7 (most
-can't find SettingsButton) plus those listed above.
-
-**Open:** face-selection mirror (spec §5.6), the
-blue/purple Mirror badges, a "zoom to face" that also fits the face's size
-(today it keeps the current distance, min 14 mm), and a UI test for each
-of the four gestures above.
+**Open:** revolve / sweep / loft cuts on solids without history still use
+mesh CSG; other `makeWatertight` callers (Split, Shell, Replace Face) no
+longer assert but don't check for openings.
 
 ## Open work — 2026-10-21, five UI tests fail before today's changes too
 
@@ -303,6 +502,70 @@ passes alone.
   every B-rep body's bounds with `BRepBndLib::AddOptimal` on exact geometry
   on every call, which a dense STEP import could make slow — cache on the
   body's mesh revision if an agent loop ever feels it.
+
+## Mission log — 2026-11-26, the built-in assistant (#119)
+
+The user: "lets build the AI side panel where people can enter their own
+keys — since the user is initiating that we are fine with our privacy — it
+should just warn them then", and later "ship the ai panel on all apps".
+
+**What shipped.** An **Assistant** button (sparkles) in the top bar opens a
+panel in the Items panel's place. Before a key is saved the panel is the
+notice: what is sent (messages, and what the assistant reads from the
+design: sizes, sketches, viewport pictures), where (straight to Anthropic),
+who pays (the person's own key), and that nothing passes through our
+servers. With a key it is a chat: each tool call is a row ("New sketch",
+"Extrude", a tick or a cross with the reason), the reply streams in, Stop
+ends the turn, and every step is an ordinary undoable feature. User-facing
+and developer detail: `docs/BUILT_IN_ASSISTANT.md`.
+
+**How it is put together.**
+
+- `Assistant/AssistantWire.swift`: the Messages API as pure values (request,
+  streamed reply reassembled, echo rules, tool answers, error wording).
+  Swift has no official Anthropic SDK, so this is raw HTTP + server-sent
+  events. Models: Opus 5.5 (default), Sonnet 5.5, Haiku 5.5, Fable 5.2;
+  adaptive thinking, effort `high`, prompt caching on the guide and on the
+  growing conversation.
+- `Assistant/AssistantSession.swift`: the request → tool calls → request
+  loop; `AssistantKeyStore.swift`: the key in the Keychain, this device only.
+- `Agent/AgentLocalCall.swift`: a tool call made from inside the app, phrased
+  as the MCP `tools/call` it is and sent through `AgentMCP.plan` →
+  `AgentRouter` → `AgentBridge`. The panel and Claude Desktop therefore run
+  the same code; there is no second implementation of any op.
+- `Agent/AgentBridgeDevice.swift`: the bridge's routes that need UIKit or the
+  device (screenshot, accuracy image, archive, SpaceMouse, capture), moved
+  out of `AgentBridge.swift` so the web engine can compile the bridge
+  unchanged. The web has its own `handleDeviceRoute`.
+- `Assistant/AssistantPrompt.md`: who the assistant is here. A bundled
+  resource so the web app sends the same words.
+
+**Also in this change.** `ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES` for the
+Mac sandbox: without it the Mac app could not reach any server at all (#118;
+bug reports and Open on the Web were failing there too). The bundled
+`ModelingGuide.md` was regenerated from the skill
+(`scripts/sync_ai_resources.py`); it had been stale on `main` and
+`AgentMCPTests.testBundledGuideIsTheSkillBody` was failing (#140).
+
+**Tested.** `AssistantWireTests` (27, pure). `AssistantPanelUITests` (3) run
+the panel in the live app against a stand-in for the API inside the test: a
+typed request builds a 40 × 30 × 10 mm block through the real tool path
+(`state` reports 12 000 mm³), the stand-in fails the test on any malformed
+request (roles out of order, a tool call unanswered, an empty text block), a
+refused key is explained, and the notice is checked word for word before a
+key exists. Full unit suite and a Mac Catalyst build pass.
+
+**Not tested: a conversation with the real API.** No API key was available
+when this was built. The request shape follows Anthropic's
+current reference (API version 2026-10-21) and the stand-in enforces the
+rules that reference states, but the first real-key run is still owed. If
+the key's account cannot use the decline-retry beta the app drops it and
+sends again; any other 400 would show its message in the panel.
+
+**Limits.** A conversation is not saved with the design. On iPad and iPhone
+the assistant cannot export a file (it points at the Export menu). No
+OpenAI / ChatGPT provider yet: the wire layer is Claude's; #119 asked for
+either.
 
 ## Mission log — 2026-10-26, scan-to-CAD: sections — sampling round every height, lofting what isn't round
 
@@ -5532,6 +5795,21 @@ first differing frame is the one you want.
     default and writes pcurves onto its operands; use the builder with
     `SetNonDestructive(Standard_True)`. `OpsLeaveInputsUntouchedTests` is
     the pattern for checking a new op.
+
+62. **`URLSession.AsyncBytes.lines` drops blank lines** (2026-11-26). A
+    server-sent-event stream separates events with a blank line, and `lines`
+    never yields one, so an event cannot be delimited that way. The Messages
+    API puts each event's whole JSON, `type` included, on one `data:` line,
+    which is why `ServerSentEvents.dataPayload(ofLine:)` reads lines one at a
+    time and ignores `event:`. A different SSE source would need a byte-level
+    reader.
+
+63. **A plain-HTTP loopback server works from the simulator without an ATS
+    exception** (2026-11-26). `AssistantPanelUITests` runs its stand-in API on
+    `http://127.0.0.1:<port>` inside the test runner; the app under test
+    reaches it with no `NSAllowsLocalNetworking`. The DEBUG-only
+    `OS3D_ASSISTANT_URL` / `OS3D_ASSISTANT_KEY` environment variables are how
+    the test points the app at it; Release builds ignore both.
 
 ## 4. Next missions (prioritized)
 

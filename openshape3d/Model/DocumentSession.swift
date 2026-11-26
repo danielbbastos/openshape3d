@@ -10,6 +10,7 @@
 import Foundation
 import SwiftData
 import Observation
+import simd
 
 @MainActor
 @Observable
@@ -34,7 +35,16 @@ final class DocumentSession {
     /// and adopted to the document's bodies after each apply; the read-only
     /// replays (`refreshEvalErrors`, `inputBody`) use a discarded copy.
     private var evalCache = EvalCache()
+    /// The geometry each body's row last received from `save()` this
+    /// session, so an autosave encodes only bodies whose mesh, B-rep or
+    /// primitive changed since (`SavedGeometry.matches`).
+    private var savedGeometry: [UUID: SavedGeometry] = [:]
     private(set) var lastEvalErrors: [FeatureID: FeatureError] = [:]
+    /// `FeatureGraph.evalInputsKey` of the state `lastEvalErrors` was
+    /// computed for; nil when unknown. Undo/redo skip the badge replay when
+    /// the key is unchanged: undoing a line in a sketch no feature reads
+    /// replayed the whole history (6.8 s on a real model in Debug).
+    private var lastEvalErrorsKey: UInt64?
 
     /// The face tables of the most recent APPLIED rebuild — the tables whose
     /// triangle indices are valid against the documents' CURRENT renders,
@@ -232,6 +242,30 @@ final class DocumentSession {
         return result.bodies.first { $0.id == bodyID }
     }
 
+    /// The bodies the history would produce with feature `id` changed to
+    /// `kind`, without touching the document or the memo: the live preview of
+    /// editing a feature that later features build on, so a chamfer made
+    /// after a fillet stays on screen while the fillet is resized. Against a
+    /// copy of the memo, so everything before `id` is free. Nil when `id` or
+    /// any later feature fails with the edit (the caller falls back).
+    func previewBodies(editing id: FeatureID, to kind: FeatureKind) -> [Body]? {
+        var graph = document.features
+        guard let index = graph.index(of: id) else { return nil }
+        graph.nodes[index].kind = kind
+        var counter = Self.scratchRevisionBase
+        var scratch = evalCache
+        let result = graph.evaluate(
+            sketches: document.sketches,
+            planes: document.planes,
+            naming: naming,
+            nextRevision: { counter &+= 1; return counter },
+            cache: &scratch
+        )
+        let affected = Set(graph.nodes[index...].map(\.id))
+        guard !result.errors.keys.contains(where: affected.contains) else { return nil }
+        return result.bodies
+    }
+
     func rebuildFrom(_ id: FeatureID, edit: EditFeatureCommand? = nil) {
         // Graph with the pending parameter edit applied, so replay sees the new
         // parameters without mutating the live document yet.
@@ -426,6 +460,8 @@ final class DocumentSession {
             title: title
         )
         lastEvalErrors = plan.errors
+        lastEvalErrorsKey = editedGraph.evalInputsKey(
+            sketches: sketches ?? document.sketches, planes: document.planes)
         lastFaceTables = plan.faceTables
         lastKernelNames = plan.kernelNames
 
@@ -865,6 +901,7 @@ final class DocumentSession {
         }
         document = loaded
         evalCache = EvalCache()   // a fresh memo for a freshly loaded document
+        savedGeometry = [:]   // rows hold what was loaded, not what this session wrote
         #if DEBUG
         OpenTiming.mark("\(loaded.features.nodes.count) features decoded, load done")
         #endif
@@ -899,6 +936,53 @@ final class DocumentSession {
         // because errors only existed after the first live rebuild (review
         // R4-N6). Surface them without holding the open: see below.
         scheduleLoadEvalRefresh()
+        scheduleLoadKernelEdges()
+    }
+
+    /// A reopened B-rep body has its stored mesh but no kernel edges (they
+    /// are not persisted, and the stored B-rep has no triangulation to read
+    /// them from), so until something rebuilt it, it drew and picked crease
+    /// edges: no fillet tangent edges, stray lines on curved faces. Read them
+    /// off a mesh-free copy, tessellated with the same settings, off the open
+    /// path; a body whose stored mesh the copy does not match keeps creases.
+    private func scheduleLoadKernelEdges() {
+        let pending = document.bodies.compactMap { body -> (BodyID, BRepHandle, RenderMesh)? in
+            guard let brep = body.brep, body.render.kernelEdgeSegments == nil else { return nil }
+            return (body.id, brep, body.render)
+        }
+        guard !pending.isEmpty else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            var found: [(BodyID, BRepHandle, [SIMD3<Float>])] = []
+            for (id, brep, render) in pending {
+                let segments = OCCTKernel.kernelEdgeSegments(from: brep, remesh: true)
+                if let matched = RenderMesh.matchingKernelEdges(segments, on: render) {
+                    found.append((id, brep, matched))
+                }
+            }
+            guard !found.isEmpty else { return }
+            await self?.adoptLoadKernelEdges(found)
+        }
+    }
+
+    /// The main-actor half of `scheduleLoadKernelEdges`: only bodies still
+    /// holding the same B-rep and a mesh the edges lie on. A new revision
+    /// makes the renderer upload the new lines; the eval memo is handed the
+    /// updated bodies so it still matches the document.
+    private func adoptLoadKernelEdges(_ found: [(BodyID, BRepHandle, [SIMD3<Float>])]) {
+        var changed = false
+        for (id, brep, segments) in found {
+            guard let i = document.bodies.firstIndex(where: { $0.id == id }),
+                  document.bodies[i].brep === brep,
+                  document.bodies[i].render.kernelEdgeSegments == nil,
+                  let matched = RenderMesh.matchingKernelEdges(segments, on: document.bodies[i].render)
+            else { continue }
+            document.bodies[i].render.kernelEdgeSegments = matched
+            document.bodies[i].edges = FeatureEdgeExtractor.edges(from: document.bodies[i].render)
+            document.bodies[i].meshRevision = document.nextRevision()
+            changed = true
+        }
+        guard changed else { return }
+        if !evalCache.entries.isEmpty { adoptCachedBodies() }
     }
 
     /// The load-time badge refresh, off the open path. It is the whole graph
@@ -907,38 +991,83 @@ final class DocumentSession {
     /// takes a second or two to open") — so it runs detached on value copies,
     /// as the boolean CSG does, and only its error map comes back, and only
     /// if the document has not changed meanwhile (an edit's own rebuild has
-    /// fresher errors). The scratch memo is NOT adopted: its revision stamps
-    /// come from a scratch counter, not the document's, so the first live
-    /// rebuild still warms the memo itself.
+    /// fresher errors). Its memo is adopted too (`adoptLoadEvalResult`), so
+    /// the first feature edit or undo after opening reruns only what changed
+    /// instead of the whole history. Its revision stamps come from a scratch
+    /// counter started far above any the document mints, so they never
+    /// collide; adoption hands the document's own revisions to every body
+    /// the document holds.
     private func scheduleLoadEvalRefresh() {
         guard !document.features.nodes.isEmpty else {
             lastEvalErrors = [:]
+            lastEvalErrorsKey = nil
             return
         }
         let features = document.features
+        let key = features.evalInputsKey(sketches: document.sketches, planes: document.planes)
         let sketches = document.sketches
         let planes = document.planes
         let naming = naming
         let generation = changeCount
         Task.detached(priority: .utility) { [weak self] in
-            var counter: UInt64 = 1
+            var counter = Self.scratchRevisionBase
             var scratch = EvalCache()
-            let errors = features.evaluate(
+            let result = features.evaluate(
                 sketches: sketches,
                 planes: planes,
                 naming: naming,
                 nextRevision: { counter &+= 1; return counter },
                 cache: &scratch
-            ).errors
-            await self?.adoptLoadEvalErrors(errors, generation: generation)
+            )
+            await self?.adoptLoadEvalResult(result.errors, memo: scratch, bodies: result.bodies,
+                                             key: key, generation: generation)
         }
+    }
+
+    /// Where a background replay's revisions start: far above anything the
+    /// document's own counter reaches, so a memo body that is never handed
+    /// the document's revision (an intermediate an in-place op re-puts) can
+    /// never share one with a real body and fool the GPU cache.
+    nonisolated static let scratchRevisionBase: UInt64 = 1 << 62
+
+    /// The open-time replay's memo may stand in for the one the first live
+    /// rebuild would build, but only when it describes the document as it
+    /// is: no live rebuild has warmed the memo since, every input a replay
+    /// reads is unchanged, and every body it produced matches the stored
+    /// one (same triangles and bounds). A document saved by an older build
+    /// whose stored meshes differ from what a replay makes keeps today's
+    /// behaviour: the first live rebuild replays everything and fixes them.
+    nonisolated static func replayMatchesDocument(_ replayed: [Body], _ live: [Body]) -> Bool {
+        let byID = Dictionary(live.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for body in replayed {
+            guard let doc = byID[body.id],
+                  doc.render.triangleCount == body.render.triangleCount,
+                  doc.render.positions.count == body.render.positions.count else { return false }
+            let a = doc.render.localAABB, b = body.render.localAABB
+            let tolerance: Float = 1e-3
+            guard simd_reduce_max(simd_abs(a.min - b.min)) <= tolerance,
+                  simd_reduce_max(simd_abs(a.max - b.max)) <= tolerance else { return false }
+        }
+        return true
     }
 
     /// The main-actor half of `scheduleLoadEvalRefresh`: keep the replay's
     /// errors only if no edit has happened since it was scheduled.
-    private func adoptLoadEvalErrors(_ errors: [FeatureID: FeatureError], generation: Int) {
-        guard changeCount == generation else { return }
+    private func adoptLoadEvalResult(_ errors: [FeatureID: FeatureError], memo: EvalCache, bodies: [Body],
+                                     key: UInt64?, generation: Int) {
+        // An edit since may still leave everything a replay reads as it was
+        // (a sketch line no feature uses): the errors are then still right,
+        // and dropping them made the first undo replay the whole history.
+        let stillCurrent = key != nil
+            && key == document.features.evalInputsKey(sketches: document.sketches,
+                                                      planes: document.planes)
+        guard changeCount == generation || stillCurrent else { return }
         lastEvalErrors = errors
+        lastEvalErrorsKey = key
+        guard stillCurrent, evalCache.entries.isEmpty,
+              Self.replayMatchesDocument(bodies, document.bodies) else { return }
+        evalCache = memo
+        adoptCachedBodies()
     }
 
     /// Recompute `lastEvalErrors` WITHOUT touching any body: replay the
@@ -950,8 +1079,14 @@ final class DocumentSession {
     private func refreshEvalErrors() {
         guard !document.features.nodes.isEmpty else {
             lastEvalErrors = [:]
+            lastEvalErrorsKey = nil
             return
         }
+        // Nothing a replay reads has changed (a sketch line no feature uses,
+        // a rename, a material): the badges already describe this state.
+        let key = document.features.evalInputsKey(sketches: document.sketches,
+                                                  planes: document.planes)
+        if let key, key == lastEvalErrorsKey { return }
         var counter: UInt64 = 1
         // Against a COPY of the memo: as fast as a live rebuild for unchanged
         // nodes, and still incapable of mutating the document or the memo.
@@ -964,6 +1099,7 @@ final class DocumentSession {
             cache: &scratch
         )
         lastEvalErrors = result.errors
+        lastEvalErrorsKey = key
     }
 
     private func scheduleAutosave() {
@@ -999,10 +1135,29 @@ final class DocumentSession {
         for body in document.bodies {
             liveIDs.insert(body.id.raw)
             guard let transformData = try? JSONEncoder().encode(body.transform) else { continue }
-            let primitiveData = body.primitive.flatMap { try? JSONEncoder().encode($0) }
-            let meshData = MeshBlob.encode(body.render)
             let materialData = body.material.flatMap { try? JSONEncoder().encode($0) }
             let faceMaterialsData = body.faceMaterials.isEmpty ? nil : try? JSONEncoder().encode(body.faceMaterials)
+            // Geometry this session already wrote to the row is not encoded
+            // again: re-encoding every mesh and B-rep on every autosave held
+            // the main thread for seconds on a large model, after any edit
+            // at all — a sketch line, an undo.
+            if let persisted = persistedByID[body.id.raw],
+               savedGeometry[body.id.raw]?.matches(body) == true {
+                let id = body.id.raw
+                persisted.name = body.name
+                persisted.transformData = transformData
+                persisted.isHidden = body.isHidden
+                if !(materialData == nil && unreadableRows.bodyMaterial.contains(id)) {
+                    persisted.materialData = materialData
+                }
+                if !(faceMaterialsData == nil && unreadableRows.bodyFaceMaterials.contains(id)) {
+                    persisted.faceMaterialsData = faceMaterialsData
+                }
+                continue
+            }
+            let primitiveData = body.primitive.flatMap { try? JSONEncoder().encode($0) }
+            let meshData = MeshBlob.encode(body.render)
+            defer { savedGeometry[body.id.raw] = SavedGeometry(body) }
             // Analytic geometry, when this body has it — so roundness and boolean
             // composability survive a reload instead of degrading to triangles.
             let brepData = body.brep.flatMap { OCCTKernel.serialize($0) }
@@ -1289,5 +1444,24 @@ final class DocumentSession {
             // the editor can tell the user their work isn't reaching disk.
             lastSaveError = error.localizedDescription
         }
+    }
+}
+
+/// A body's geometry as `DocumentSession.save()` last wrote it. Holding the
+/// values costs nothing extra (the arrays share storage until the body
+/// changes), and comparing an unchanged mesh is a storage-identity check.
+nonisolated struct SavedGeometry {
+    let render: RenderMesh
+    let brep: BRepHandle?
+    let primitive: PrimitiveSpec?
+
+    init(_ body: Body) {
+        render = body.render
+        brep = body.brep
+        primitive = body.primitive
+    }
+
+    func matches(_ body: Body) -> Bool {
+        body.brep === brep && body.primitive == primitive && body.render == render
     }
 }

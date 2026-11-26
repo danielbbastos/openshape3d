@@ -87,6 +87,10 @@ final class MeasureUITests: XCTestCase {
         let window = app.windows.firstMatch
 
         app.buttons["MeasureButton"].firstMatch.tap()
+        // Measure opens on Object Measurements (the menu's first type).
+        XCTAssertTrue(app.otherElements["MeasurePanel"].waitForExistence(timeout: 3))
+        app.buttons["MeasureTypeMenu"].tap()
+        app.buttons["MeasureType-pointToPoint"].tap()
         XCTAssertTrue(
             app.staticTexts["Tap two points to measure"].waitForExistence(timeout: 3)
         )
@@ -147,7 +151,7 @@ final class MeasureUITests: XCTestCase {
         XCTAssertTrue(angle.waitForExistence(timeout: 3), "Three corner picks read an angle")
         XCTAssertTrue(angle.label.hasSuffix("°"), angle.label)
 
-        app.buttons["PinMeasurement"].tap()
+        app.buttons["PinMeasurement"].firstMatch.tap()
         XCTAssertTrue(app.otherElements["PinnedMeasurement"].waitForExistence(timeout: 3)
                         || app.staticTexts[angle.label].waitForExistence(timeout: 1),
                       "The pinned reading stays on screen")
@@ -157,5 +161,48 @@ final class MeasureUITests: XCTestCase {
         app.buttons["UndoButton"].tap()
         XCTAssertFalse(app.buttons["UnpinMeasurement"].exists)
         XCTAssertFalse(app.otherElements["PinnedMeasurement"].exists, "Undo takes the pin back")
+    }
+
+    /// Object Measurements (the Measure menu's first type) on the seeded
+    /// 4×4×4 box: one face reads its area, a second face the angle between
+    /// them, a double-tap the whole body's volume; a pinned reading is
+    /// listed under Pinned and Delete removes it.
+    func testObjectMeasurementsOnTheSeededBox() throws {
+        let app = launchSeeded()
+        let window = app.windows.firstMatch
+
+        app.buttons["MeasureButton"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["Tap a body, face, edge or sketch shape"].waitForExistence(timeout: 3))
+
+        // The top face (same spot as the info-bar face test).
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)).tap()
+        let area = app.staticTexts["MeasureValue-area"]
+        XCTAssertTrue(area.waitForExistence(timeout: 3), "a face reads its area")
+        XCTAssertEqual(area.label, "16.00 mm²")
+        sleep(1) // stay clear of the double-tap window
+
+        // The front-right face: two faces read the angle between them.
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.67, dy: 0.55)).tap()
+        let angle = app.staticTexts["MeasureValue-angle"]
+        XCTAssertTrue(angle.waitForExistence(timeout: 3), "two faces read an angle")
+        XCTAssertTrue(angle.label.hasPrefix("90"), angle.label)
+        XCTAssertTrue(app.staticTexts["MeasureValue-minDistance"].exists)
+        sleep(1)
+
+        // A double-tap takes the whole body instead of its faces.
+        window.coordinate(withNormalizedOffset: CGVector(dx: 0.67, dy: 0.55)).doubleTap()
+        let volume = app.staticTexts["MeasureValue-volume"]
+        XCTAssertTrue(volume.waitForExistence(timeout: 3), "a double-tap measures the body")
+        XCTAssertEqual(volume.label, "64.00 mm³")
+
+        app.buttons["PinMeasurement"].firstMatch.tap()
+        let delete = app.buttons["DeletePinnedMeasurement"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3), "the pin is listed under Pinned")
+        XCTAssertTrue(app.otherElements["PinnedMeasurement"].exists, "and drawn in the model")
+        delete.tap()
+        XCTAssertFalse(app.buttons["DeletePinnedMeasurement"].exists)
+
+        app.buttons["CloseMeasure"].tap()
+        XCTAssertFalse(app.otherElements["MeasurePanel"].exists)
     }
 }

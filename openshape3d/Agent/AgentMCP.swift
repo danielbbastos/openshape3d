@@ -145,6 +145,7 @@ nonisolated enum AgentMCP {
         "health": "os3d_health", "state": "os3d_state", "faces": "os3d_faces", "edges": "os3d_edges",
         "sketches": "os3d_sketches", "check": "os3d_check", "screenshot": "os3d_screenshot",
         "commands": "os3d_list_commands", "accuracy": "os3d_accuracy", "accuracy.image": "os3d_accuracy_image",
+        "measure": "os3d_measure",
     ]
 
     /// The REST request a tool call stands for. Everything past this point is
@@ -197,6 +198,9 @@ nonisolated enum AgentMCP {
                 return .failure(Problem(message: "\(tool) needs 'body' — a body id from os3d_state."))
             }
             return get(tool == "os3d_faces" ? "/v1/faces" : "/v1/edges", ["body": body])
+        case "os3d_measure":
+            // Items and the deltas switch travel as the JSON body.
+            return post("/v1/measure", arguments)
         case "os3d_check":
             var query: [String: String] = [:]
             if let body = bodyID() { query["body"] = body }

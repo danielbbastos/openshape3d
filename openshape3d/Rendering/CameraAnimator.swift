@@ -67,13 +67,9 @@ final class CameraAnimator {
     private func land() {
         displayLink?.invalidate()
         displayLink = nil
-        guard let renderer, let target else { return }
-        // The same four values `step` eases; projection and the rest stay.
-        var camera = renderer.camera
-        camera.target = target.target
-        camera.distance = target.distance
-        camera.azimuth = target.azimuth
-        camera.elevation = target.elevation
+        guard let renderer, var camera = target else { return }
+        // The end pose of everything `step` eases; the projection stays.
+        camera.projection = renderer.camera.projection
         renderer.camera = camera
         view?.setNeedsDisplay()
         cameraChanged?()
@@ -95,6 +91,7 @@ final class CameraAnimator {
         camera.distance = start.distance + (target.distance - start.distance) * t
         camera.azimuth = start.azimuth + shortestAngle(from: start.azimuth, to: target.azimuth) * t
         camera.elevation = start.elevation + (target.elevation - start.elevation) * t
+        camera.roll = start.roll + shortestAngle(from: start.roll, to: target.roll) * t
         renderer.camera = camera
         view?.setNeedsDisplay()
         cameraChanged?()

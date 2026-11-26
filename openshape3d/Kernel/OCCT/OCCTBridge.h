@@ -569,6 +569,12 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
                             toPointX:(double)x y:(double)y z:(double)z
                            tolerance:(double)tolerance;
 
+/// The 1-based index of the face nearest the point (within `tolerance`), 0
+/// when none — a tapped render triangle's kernel face, for Measure.
++ (NSInteger)nearestFaceIndexOfShape:(OCCTShape *)shape
+                            toPointX:(double)x y:(double)y z:(double)z
+                           tolerance:(double)tolerance;
+
 /// Each edge's point halfway along its curve BY ARC LENGTH, as packed
 /// doubles `x y z` per edge in the shared 1-based indexed-map order (entry
 /// i−1 is edge i). NaN for an edge with no curve (degenerated) or whose
@@ -577,6 +583,16 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
 /// parameter, so it is fixed by the shape. `/v1/edges` reports it, where a
 /// tessellation segment's midpoint used to be whichever came first.
 + (nullable NSData *)edgeMidpointsOfShape:(OCCTShape *)shape;
+
+/// Every edge between two faces as line-list segments (6 floats each), taken
+/// from the face triangulation so each one lies on a render-mesh edge. Seams
+/// and degenerate edges are left out. With `remesh` (or when the shape has no
+/// triangulation) a mesh-free copy is tessellated with these deflections,
+/// leaving `shape` untouched. Nil when there are none or on failure.
++ (nullable NSData *)edgeSegmentsOfShape:(OCCTShape *)shape
+                       angularDeflection:(double)angularDeflection
+                        linearDeflection:(double)linearDeflection
+                                  remesh:(BOOL)remesh;
 
 /// The largest fillet radius the edges near `worldPoints` can actually
 /// take, found by bisection over REAL (fully checked) `BRepFilletAPI`
@@ -590,10 +606,47 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
                     atWorldPoints:(NSData *)worldPoints
                         tolerance:(double)tolerance;
 
+/// The same for a symmetric chamfer: the largest setback the edges near
+/// `worldPoints` take, by bisection over real `BRepFilletAPI_MakeChamfer`
+/// builds. Compute once per drag. 0 when nothing chamferable is near.
++ (double)maxChamferDistanceForShape:(OCCTShape *)shape
+                       atWorldPoints:(NSData *)worldPoints
+                           tolerance:(double)tolerance;
+
 /// Exact solid volume (mm³) via `BRepGProp`; 0 on failure. Cheap enough for
 /// sanity checks (a shell must REMOVE material) and exact enough for tests to
 /// pin against analytically-derived values.
 + (double)volumeOfShape:(OCCTShape *)shape;
+
+/// Measure ▸ what one piece of a shape is, for the Measure tool's rows.
+/// `kind` 0 = the whole shape, 1 = face `index`, 2 = edge `index` (1-based
+/// indexed-map order, as everywhere else). Packed doubles, 20 per answer:
+/// - shape `[0]=0, [1] volume, [2…4] centre of mass`, rest 0.
+/// - face `[0]=1, [1] surfaceCode, [2] area, [3…5] centroid, [6…8] p,
+///   [9…11] d, [12] r, [13] s, [14…16] a point on the face nearest its
+///   centroid`, rest 0. surfaceCode 0 plane (p origin, d
+///   outward normal), 1 cylinder (p on axis, d axis, r radius), 2 cone
+///   (p apex, d axis, r semi-angle in radians, s reference radius), 3 sphere
+///   (p centre, r radius), 4 other.
+/// - edge `[0]=2, [1] curveCode, [2] length, [3…5] start, [6…8] end,
+///   [9…11] c, [12…14] d, [15] r, [16…18] the middle by arc length`. curveCode 0 line, 1 circle or arc
+///   (c centre, d axis, r radius), 2 other.
+/// Nil on a null shape or a missing index.
++ (nullable NSData *)measureGeometryOfShape:(OCCTShape *)shape
+                                       kind:(NSInteger)kind
+                                      index:(NSInteger)index
+    NS_SWIFT_NAME(measureGeometry(of:kind:index:));
+
+/// Measure ▸ Minimum distance between two pieces (`kind`/`index` as above)
+/// of two shapes in the same frame (`BRepExtrema_DistShapeShape`): packed
+/// doubles `distance, pointA xyz, pointB xyz`. Nil when it cannot be found.
++ (nullable NSData *)minimumDistanceBetweenShape:(OCCTShape *)a
+                                            kind:(NSInteger)kindA
+                                           index:(NSInteger)indexA
+                                        andShape:(OCCTShape *)b
+                                            kind:(NSInteger)kindB
+                                           index:(NSInteger)indexB
+    NS_SWIFT_NAME(minimumDistance(between:kind:index:and:kind:index:));
 
 /// Tight axis-aligned bounds of the exact geometry (`BRepBndLib::AddOptimal`
 /// without triangulation or tolerance padding), in the shape's own frame.

@@ -198,6 +198,10 @@ struct EditorView: View {
     @State private var viewModel: EditorViewModel?
     @State private var exportDocument: ExportDocument?
     @State private var showItemsPanel = false
+    /// The built-in assistant (#119): its conversation, and whether its
+    /// panel is open. The panel takes the Items panel's place while shown.
+    @State private var assistant = AssistantSession()
+    @State private var showAssistantPanel = false
     @State private var showBugReport = false
     /// Export ▸ Open on the Web… (WebHandoffSheet).
     @State private var showWebHandoff = false
@@ -459,74 +463,6 @@ struct EditorView: View {
     }
 
     /// Measure tool pill: prompts for picks, then shows distance + deltas.
-    private func measurePill(_ viewModel: EditorViewModel) -> some View {
-        HStack(spacing: 12) {
-            Menu {
-                ForEach(EditorViewModel.MeasureType.allCases, id: \.self) { type in
-                    Button(type.title) { viewModel.measureType = type }
-                        .accessibilityIdentifier("MeasureType-" + type.rawValue)
-                }
-            } label: {
-                Image(systemName: viewModel.measureType == .pointToPoint ? "ruler" : "angle")
-            }
-            .accessibilityIdentifier("MeasureTypeMenu")
-            if let result = viewModel.measureResult, viewModel.measureType == .pointToPoint {
-                Text(EditorViewModel.formattedLength(result.distance))
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("MeasureDistanceValue")
-                Text(String(
-                    format: "ΔX %.2f  ΔY %.2f  ΔZ %.2f",
-                    settings.unit.display(fromMM: result.deltas.x),
-                    settings.unit.display(fromMM: result.deltas.y),
-                    settings.unit.display(fromMM: result.deltas.z)
-                ))
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-            } else if let angle = viewModel.measureAngle {
-                Text(EditorViewModel.formattedAngle(angle))
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("MeasureAngleValue")
-            } else {
-                Text(measurePrompt(viewModel))
-                    .font(.subheadline)
-                    .accessibilityIdentifier("MeasurePrompt")
-            }
-            if viewModel.measurementToPin != nil {
-                Button {
-                    viewModel.pinCurrentMeasurement()
-                } label: {
-                    Label("Pin", systemImage: "pin")
-                }
-                .controlSize(.small)
-                .accessibilityIdentifier("PinMeasurement")
-            }
-            Button("Done") {
-                viewModel.exitMeasure()
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.small)
-            .keyboardShortcut(.cancelAction)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: Capsule())
-        .shadow(color: .black.opacity(0.15), radius: 8, y: 2)
-        .padding(.top, 8)
-    }
-
-    private func measurePrompt(_ viewModel: EditorViewModel) -> String {
-        let picked = viewModel.measurePoints.count
-        switch viewModel.measureType {
-        case .pointToPoint:
-            return picked == 0 ? "Tap two points to measure" : "Tap the second point"
-        case .threePointAngle:
-            return ["Tap the first arm's point", "Tap the corner", "Tap the second arm's point"][min(picked, 2)]
-        }
-    }
-
     /// Chamfer/Fillet bar (Phase E, spec §4.3): shows the pick prompt, the
     /// size field (setback/radius), and Apply/Cancel.
     private func blendBar(_ kind: BlendKind, _ viewModel: EditorViewModel) -> some View {
@@ -1324,6 +1260,7 @@ struct EditorView: View {
                 // chip while drawing.
                 ZStack {
                     OrientationCubeLabels(viewModel: viewModel)
+                    OrientationCubeSpinArrows(viewModel: viewModel)
                     MoveGizmoOverlay(viewModel: viewModel)
                     SnapChipOverlay(viewModel: viewModel)
                 }
@@ -1432,6 +1369,11 @@ struct EditorView: View {
                         .padding(.trailing, 14)
                         .padding(.top, 8)
                     }
+                } else if showAssistantPanel {
+                    AssistantPanelView(session: assistant) { showAssistantPanel = false }
+                        .padding(.trailing, 14)
+                        .padding(.top, 8)
+                        .padding(.bottom, bottomBarInset)
                 } else if showItemsPanel {
                     ItemsPanelView(viewModel: viewModel)
                         .padding(.trailing, 14)
@@ -1459,8 +1401,9 @@ struct EditorView: View {
                     // Interface side (spec §17): palette flips to the right
                     // for left-handed sketching.
                     .padding(settings.paletteOnRight ? .trailing : .leading,
-                             (settings.paletteOnRight ? showItemsPanel : viewModel.showHistoryPanel)
-                             ? 318 : 14)
+                             settings.paletteOnRight
+                             ? (showAssistantPanel ? 348 : showItemsPanel ? 318 : 14)
+                             : (viewModel.showHistoryPanel ? 318 : 14))
                     // Keep the (scrollable) palette clear of the top bar and
                     // the bottom info/input bars, which span the full width:
                     // without the inset the last tools (Delete) can sit under
@@ -1945,8 +1888,6 @@ struct EditorView: View {
                         .controlSize(.small)
                         .keyboardShortcut(.cancelAction)
                     }
-                } else if case .measuring = viewModel.mode {
-                    measurePill(viewModel)
                 } else if case .faceSelected = viewModel.mode {
                     statusPill(
                         icon: viewModel.notice != nil
@@ -1993,6 +1934,14 @@ struct EditorView: View {
     /// Full-screen overlays, the toolbar and the sheets.
     private func chromeToolbarStage(_ content: some View, _ viewModel: EditorViewModel) -> some View {
         content
+            .overlay {
+                // Measure's panel stays up for the whole mode (spec §16.3).
+                if case .measuring = viewModel.mode {
+                    MeasurePanel(viewModel: viewModel,
+                                 compact: horizontalSizeClass == .compact,
+                                 bottomInset: bottomBarInset)
+                }
+            }
             .overlay {
                 if viewModel.isComputingBoolean {
                     VStack(spacing: 12) {
@@ -2223,6 +2172,14 @@ struct EditorView: View {
                         ToolbarLabel("Items", systemImage: "sidebar.trailing")
                     }
                     .accessibilityIdentifier("ItemsButton")
+
+                    // The built-in assistant (#119), on the person's own API key.
+                    Button {
+                        showAssistantPanel.toggle()
+                    } label: {
+                        ToolbarLabel("Assistant", systemImage: "sparkles")
+                    }
+                    .accessibilityIdentifier("AssistantButton")
 
                     // Tools ▸ Visualize (spec §14).
                     Button {

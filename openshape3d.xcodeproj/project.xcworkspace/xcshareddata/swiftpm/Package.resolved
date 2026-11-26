@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/nicklockwood/Euclid",
       "state" : {
-        "revision" : "be1096bc1d0810d93d1179ba6a9cf03a7ba564af",
-        "version" : "0.8.18"
+        "revision" : "a28c7439a9e00e3c1312cd25a8aae4fbdbe35bcd",
+        "version" : "0.10.5"
       }
     }
   ],

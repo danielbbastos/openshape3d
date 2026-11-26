@@ -179,6 +179,7 @@ nonisolated enum OrientationCube {
         lookingAlong normal: SIMD3<Float>, from camera: TurntableCamera
     ) -> TurntableCamera {
         var cam = camera
+        cam.roll = 0
         cam.elevation = min(
             max(asin(min(max(normal.y, -1), 1)), -TurntableCamera.elevationLimit),
             TurntableCamera.elevationLimit

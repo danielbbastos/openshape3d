@@ -143,6 +143,10 @@ nonisolated enum AgentRoute: Sendable, Equatable {
     /// silhouette under the model's outline, with the view's numbers.
     case accuracyImage(AccuracyQuery, view: DrawingViewDirection, width: Int,
                        format: AgentShotFormat = .png, maxBytes: Int? = nil)
+    /// Measure (spec §16.3): the Measure panel's readings for one or more
+    /// items — bodies, kernel faces / edges (the indices `/v1/faces` and
+    /// `/v1/edges` list), points, sketch entities.
+    case measure(items: [AgentMeasureItem], deltas: Bool)
     /// Already-decided replies.
     case reply(status: Int, error: String, message: String)
 
@@ -151,7 +155,7 @@ nonisolated enum AgentRoute: Sendable, Equatable {
         switch self {
         case .state, .runCommand, .exec, .screenshot, .check, .capture,
              .edges, .faces, .sketches, .project, .section, .archive, .export, .spaceMouse,
-             .accuracy, .accuracyImage:
+             .accuracy, .accuracyImage, .measure:
             return true
         case .health, .commands, .reply: return false
         }
@@ -163,6 +167,49 @@ nonisolated enum AgentRoute: Sendable, Equatable {
         case .screenshot, .accuracyImage: return true
         default: return false
         }
+    }
+}
+
+/// One thing to measure, as `/v1/measure` names it:
+/// `{"body": id}` the whole body, `{"body": id, "face": n}` / `{"body": id,
+/// "edge": n}` a kernel face or edge, `{"point": [x, y, z]}` a world point,
+/// `{"sketch": id, "entity": id}` a sketch entity.
+nonisolated enum AgentMeasureItem: Sendable, Equatable {
+    case body(UUID)
+    case face(UUID, Int)
+    case edge(UUID, Int)
+    case point(SIMD3<Double>)
+    case sketchEntity(sketch: UUID, entity: UUID)
+
+    struct Problem: Error { var message: String }
+
+    static func parse(_ json: [String: Any]?) -> Result<(items: [AgentMeasureItem], deltas: Bool), Problem> {
+        guard let list = json?["items"] as? [[String: Any]], !list.isEmpty else {
+            return .failure(Problem(message: "/v1/measure needs \"items\": a list of {body}, {body, face}, "
+                + "{body, edge}, {point: [x, y, z]} or {sketch, entity}. Ids come from /v1/state, "
+                + "face and edge indices from /v1/faces and /v1/edges."))
+        }
+        var items: [AgentMeasureItem] = []
+        for (i, entry) in list.enumerated() {
+            func uuid(_ key: String) -> UUID? { (entry[key] as? String).flatMap(UUID.init(uuidString:)) }
+            if let p = entry["point"] as? [Double], p.count == 3 {
+                items.append(.point(SIMD3(p[0], p[1], p[2])))
+            } else if let sketch = uuid("sketch"), let entity = uuid("entity") {
+                items.append(.sketchEntity(sketch: sketch, entity: entity))
+            } else if let body = uuid("body") {
+                if let face = entry["face"] as? Int {
+                    items.append(.face(body, face))
+                } else if let edge = entry["edge"] as? Int {
+                    items.append(.edge(body, edge))
+                } else {
+                    items.append(.body(body))
+                }
+            } else {
+                return .failure(Problem(message: "items[\(i)] is not {body}, {body, face}, {body, edge}, "
+                    + "{point: [x, y, z]} or {sketch, entity}."))
+            }
+        }
+        return .success((items, json?["deltas"] as? Bool ?? false))
     }
 }
 
@@ -236,6 +283,11 @@ nonisolated struct AccuracyQuery: Sendable, Equatable {
 // MARK: - Routing
 
 nonisolated enum AgentRouter {
+
+    /// The control channel's protocol version, reported by `/v1/health`. It
+    /// lives here, not on `AgentServer`, because the router is also compiled
+    /// into the web app's engine, which has no server.
+    static let protocolVersion = 1
 
     /// Bounds on `?w=`/`?h=`. The upper end is a guard against an accidental
     /// 40000px request wedging the renderer, not a considered maximum.
@@ -388,6 +440,16 @@ nonisolated enum AgentRouter {
             }
             return classify(id)
 
+        case "/v1/measure":
+            guard request.method == "POST" else {
+                return .reply(status: 405, error: "method_not_allowed",
+                              message: "POST {\"items\": [...], \"deltas\": false} to /v1/measure.")
+            }
+            switch AgentMeasureItem.parse(request.jsonBody) {
+            case .success(let parsed): return .measure(items: parsed.items, deltas: parsed.deltas)
+            case .failure(let problem): return .reply(status: 400, error: "bad_measure_items", message: problem.message)
+            }
+
         case "/v1/exec":
             guard request.method == "POST" else {
                 return .reply(status: 405, error: "method_not_allowed",
@@ -491,7 +553,7 @@ nonisolated enum AgentRouter {
 
     /// What `/v1/health` says to a caller that has not presented the code.
     static func unpairedHealthResponse() -> AgentResponse {
-        .ok(["app": "openshape3d", "protocol": AgentServer.protocolVersion, "pairing": "required"])
+        .ok(["app": "openshape3d", "protocol": protocolVersion, "pairing": "required"])
     }
 
     /// The three-way split described in this file's header.
@@ -530,7 +592,7 @@ nonisolated enum AgentRouter {
 
     static func healthResponse(port: UInt16) -> AgentResponse {
         .ok([
-            "protocol": AgentServer.protocolVersion,
+            "protocol": protocolVersion,
             "app": "openshape3d",
             "port": Int(port),
             "pid": Int(ProcessInfo.processInfo.processIdentifier),

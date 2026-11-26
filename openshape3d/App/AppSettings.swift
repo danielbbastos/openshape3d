@@ -368,6 +368,7 @@ final class AppSettings {
         static let showSnapHints = "os3d.showSnapHints"
         static let flatSketchView = "os3d.flatSketchView"
         static let sketchHidesFront = "os3d.sketchHidesFront"
+        static let measureDeltas = "os3d.measureDeltas"
         static let hasSeenWelcome = "os3d.hasSeenWelcome"
         static let footInchFormat = "os3d.footInchFormat"
         static let degreeFormat = "os3d.degreeFormat"
@@ -539,6 +540,11 @@ final class AppSettings {
     var sketchHidesFront: Bool {
         didSet { defaults.set(sketchHidesFront, forKey: Key.sketchHidesFront) }
     }
+    /// Measure ▸ Include X, Y, Z Deltas: every distance also lists its
+    /// components along the world axes.
+    var measureDeltas: Bool {
+        didSet { defaults.set(measureDeltas, forKey: Key.measureDeltas) }
+    }
 
     var snapOptions: SnapOptions {
         SnapOptions(grid: snapToGrid, sketchGuidepoints: snapToSketchGuidepoints,
@@ -578,6 +584,7 @@ final class AppSettings {
         showSnapHints = Self.storedBool(defaults, Key.showSnapHints) ?? true
         flatSketchView = Self.storedBool(defaults, Key.flatSketchView) ?? true
         sketchHidesFront = Self.storedBool(defaults, Key.sketchHidesFront) ?? true
+        measureDeltas = Self.storedBool(defaults, Key.measureDeltas) ?? false
         hasSeenWelcome = Self.storedBool(defaults, Key.hasSeenWelcome) ?? false
         unit = defaults.string(forKey: Key.unit).flatMap(DisplayUnit.init) ?? .millimeters
         footInchFormat = defaults.string(forKey: Key.footInchFormat).flatMap(FootInchFormat.init) ?? .decimal

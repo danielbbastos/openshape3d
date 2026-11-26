@@ -97,7 +97,9 @@ final class HeavyMeshGuardTests: XCTestCase {
                        ["Untitled_Scan"])
         let message = BooleanCandidacy.refusalMessage(for: heavy)
         XCTAssertTrue(message.contains("Untitled_Scan"))
-        XCTAssertTrue(message.contains("102,749") || message.contains("102 749") || message.contains("102.749"),
+        // In the user's own number format: the separator differs by locale
+        // (",", ".", or a non-breaking space that a plain " " doesn't match).
+        XCTAssertTrue(message.contains(102_749.formatted()),
                       "the message names the triangle count: \(message)")
         XCTAssertTrue(message.contains("New Body"))
     }

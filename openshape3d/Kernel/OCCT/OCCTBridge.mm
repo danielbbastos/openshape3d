@@ -105,6 +105,7 @@
 #include <BRepAdaptor_Surface.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
@@ -3032,6 +3033,79 @@ static double OS3DSpanExactArea(const TopoDS_Face &face) {
     }
 }
 
++ (NSInteger)nearestFaceIndexOfShape:(OCCTShape *)shape
+                            toPointX:(double)x y:(double)y z:(double)z
+                           tolerance:(double)tolerance {
+    if (shape == nil || shape->_shape.IsNull()) return 0;
+    try {
+        TopTools_IndexedMapOfShape faceMap;
+        TopExp::MapShapes(shape->_shape, TopAbs_FACE, faceMap);
+        if (faceMap.Extent() == 0) return 0;
+        const double pt[3] = {x, y, z};
+        const std::set<Standard_Integer> found = OS3DNearestFaces(faceMap, pt, 1, tolerance);
+        return found.empty() ? 0 : (NSInteger)*found.begin();
+    } catch (...) {
+        return 0;
+    }
+}
+
+// Every edge that bounds two faces, as the polyline its face triangulation
+// already uses: the same nodes, transformed and cast to float exactly as
+// TessellateShape writes render positions, so each segment lands on a mesh
+// edge. Seam edges (one face on both sides) and degenerate edges are left
+// out: they are artefacts of the parametrisation, not edges anyone sees.
+// An edge with no polygon on the triangulation is left out too.
+static std::vector<float> OS3DEdgeSegments(const TopoDS_Shape &shape) {
+    std::vector<float> out;
+    TopTools_IndexedDataMapOfShapeListOfShape edgeFaces;
+    TopExp::MapShapesAndAncestors(shape, TopAbs_EDGE, TopAbs_FACE, edgeFaces);
+    for (Standard_Integer e = 1; e <= edgeFaces.Extent(); ++e) {
+        const TopoDS_Edge edge = TopoDS::Edge(edgeFaces.FindKey(e));
+        if (BRep_Tool::Degenerated(edge)) continue;
+        const TopTools_ListOfShape &faces = edgeFaces.FindFromIndex(e);
+        TopTools_IndexedMapOfShape distinct;
+        for (TopTools_ListIteratorOfListOfShape it(faces); it.More(); it.Next()) distinct.Add(it.Value());
+        if (distinct.Extent() < 2) continue;
+        const TopoDS_Face face = TopoDS::Face(distinct(1));
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull()) continue;
+        Handle(Poly_PolygonOnTriangulation) poly = BRep_Tool::PolygonOnTriangulation(edge, tri, loc);
+        if (poly.IsNull() || poly->NbNodes() < 2) continue;
+        const gp_Trsf trsf = loc.Transformation();
+        for (Standard_Integer i = 1; i < poly->NbNodes(); ++i) {
+            const gp_Pnt a = tri->Node(poly->Node(i)).Transformed(trsf);
+            const gp_Pnt b = tri->Node(poly->Node(i + 1)).Transformed(trsf);
+            out.push_back((float)a.X()); out.push_back((float)a.Y()); out.push_back((float)a.Z());
+            out.push_back((float)b.X()); out.push_back((float)b.Y()); out.push_back((float)b.Z());
+        }
+    }
+    return out;
+}
+
++ (nullable NSData *)edgeSegmentsOfShape:(OCCTShape *)shape
+                       angularDeflection:(double)angularDeflection
+                        linearDeflection:(double)linearDeflection
+                                  remesh:(BOOL)remesh {
+    if (shape == nil || shape->_shape.IsNull()) return nil;
+    try {
+        TopoDS_Shape target = shape->_shape;
+        if (remesh || !OS3DHasTriangulation(target)) {
+            // A copy without the mesh, tessellated here: the stored shape is
+            // never written to, so this may run off the main thread.
+            target = OS3DWithoutMesh(shape->_shape);
+            if (target.IsNull()) return nil;
+            OCCTRenderMesh *mesh = TessellateShape(target, linearDeflection, angularDeflection);
+            if (mesh.vertexCount == 0) return nil;
+        }
+        const std::vector<float> out = OS3DEdgeSegments(target);
+        if (out.empty()) return nil;
+        return [NSData dataWithBytes:out.data() length:out.size() * sizeof(float)];
+    } catch (...) {
+        return nil;
+    }
+}
+
 + (nullable NSData *)edgeMidpointsOfShape:(OCCTShape *)shape {
     if (shape == nil || shape->_shape.IsNull()) return nil;
     try {
@@ -3114,24 +3188,11 @@ static double OS3DSpanExactArea(const TopoDS_Face &face) {
 // contour-complete, per-edge generated, single-solid, analyzer-valid. The
 // bisection's probe — identical checks to the committing path, so what the
 // clamp says fits IS what Apply builds.
-static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
-                             const TopTools_IndexedMapOfShape &edgeMap,
-                             const std::set<Standard_Integer> &edges,
-                             double radius,
-                             double deadlineSeconds = kOS3DKernelDeadlineSeconds) {
+// Every chosen edge blended, one solid, valid.
+static bool OS3DBlendResultOK(BRepFilletAPI_LocalOperation &mk,
+                              const TopTools_IndexedMapOfShape &edgeMap,
+                              const std::set<Standard_Integer> &edges) {
     try {
-        BRepFilletAPI_MakeFillet mk(shape);
-        for (Standard_Integer i : edges) {
-            mk.Add(radius, TopoDS::Edge(edgeMap(i)));
-        }
-        // The SHORT deadline: a drag clamp runs ~7 of these probes, and one
-        // hanging probe would wedge the drag exactly like the boolean hang.
-        OS3DDeadlineProgress *deadline =
-            new OS3DDeadlineProgress(deadlineSeconds);
-        Handle(Message_ProgressIndicator) progress(deadline);
-        mk.Build(progress->Start());
-        if (deadline->Fired()) return false;
-        if (!mk.IsDone() || mk.NbFaultyContours() > 0) return false;
         TopTools_IndexedMapOfShape resultEdges;
         TopExp::MapShapes(mk.Shape(), TopAbs_EDGE, resultEdges);
         for (Standard_Integer i : edges) {
@@ -3146,9 +3207,66 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
     }
 }
 
+// Whether a blend of `size` on `edges` builds a single valid solid with
+// every edge blended. A fillet (radius) or a symmetric chamfer (setback),
+// built as the commit builds them, so a drag clamp and Apply agree.
+static bool OS3DBlendBuilds(const TopoDS_Shape &shape,
+                            const TopTools_IndexedMapOfShape &edgeMap,
+                            const std::set<Standard_Integer> &edges,
+                            double size, bool isFillet,
+                            double deadlineSeconds = kOS3DKernelDeadlineSeconds) {
+    try {
+        // The SHORT deadline: a drag clamp runs ~7 of these probes, and one
+        // hanging probe would wedge the drag exactly like the boolean hang.
+        OS3DDeadlineProgress *deadline =
+            new OS3DDeadlineProgress(deadlineSeconds);
+        Handle(Message_ProgressIndicator) progress(deadline);
+        if (isFillet) {
+            BRepFilletAPI_MakeFillet mk(shape);
+            for (Standard_Integer i : edges) mk.Add(size, TopoDS::Edge(edgeMap(i)));
+            mk.Build(progress->Start());
+            if (deadline->Fired()) return false;
+            if (!mk.IsDone() || mk.NbFaultyContours() > 0) return false;
+            return OS3DBlendResultOK(mk, edgeMap, edges);
+        }
+        BRepFilletAPI_MakeChamfer mk(shape);
+        for (Standard_Integer i : edges) mk.Add(size, TopoDS::Edge(edgeMap(i)));
+        mk.Build(progress->Start());
+        if (deadline->Fired()) return false;
+        if (!mk.IsDone()) return false;
+        return OS3DBlendResultOK(mk, edgeMap, edges);
+    } catch (...) {
+        return false;
+    }
+}
+
+static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
+                             const TopTools_IndexedMapOfShape &edgeMap,
+                             const std::set<Standard_Integer> &edges,
+                             double radius,
+                             double deadlineSeconds = kOS3DKernelDeadlineSeconds) {
+    return OS3DBlendBuilds(shape, edgeMap, edges, radius, true, deadlineSeconds);
+}
+
+static double OS3DMaxBlendSize(OCCTShape *shape, NSData *worldPoints,
+                               double tolerance, bool isFillet);
+
 + (double)maxFilletRadiusForShape:(OCCTShape *)shape
                     atWorldPoints:(NSData *)worldPoints
                         tolerance:(double)tolerance {
+    return OS3DMaxBlendSize(shape, worldPoints, tolerance, true);
+}
+
++ (double)maxChamferDistanceForShape:(OCCTShape *)shape
+                       atWorldPoints:(NSData *)worldPoints
+                           tolerance:(double)tolerance {
+    return OS3DMaxBlendSize(shape, worldPoints, tolerance, false);
+}
+
+// The largest blend size (fillet radius or chamfer setback) the edges near
+// `worldPoints` take, by bisection over real builds.
+static double OS3DMaxBlendSize(OCCTShape *shape, NSData *worldPoints,
+                               double tolerance, bool isFillet) {
     if (shape == nil) return 0.0;
     const NSUInteger count = worldPoints.length / (3 * sizeof(double));
     if (count == 0) return 0.0;
@@ -3194,10 +3312,10 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
 
         // ~7-step bisection over real builds. `lo` is always a radius that
         // BUILT; a tiny probe first so a hopeless pick returns 0 fast.
-        if (OS3DFilletBuilds(shape->_shape, edgeMap, qualified, hi)) return hi;
+        if (OS3DBlendBuilds(shape->_shape, edgeMap, qualified, hi, isFillet)) return hi;
         double lo = 0.0;
         const double probe = std::min(hi * 0.01, 0.05);
-        if (probe > 0 && OS3DFilletBuilds(shape->_shape, edgeMap, qualified, probe)) {
+        if (probe > 0 && OS3DBlendBuilds(shape->_shape, edgeMap, qualified, probe, isFillet)) {
             lo = probe;
         } else {
             // Whether a size builds is not monotonic: a tiny blend can fail
@@ -3211,7 +3329,7 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
             for (double r = 0.5 * hi; r > probe; r *= 0.5) {
                 const double left = budgetEnd - CFAbsoluteTimeGetCurrent();
                 if (left <= 0) break;
-                if (OS3DFilletBuilds(shape->_shape, edgeMap, qualified, r, left)) {
+                if (OS3DBlendBuilds(shape->_shape, edgeMap, qualified, r, isFillet, left)) {
                     lo = r;
                     hi = 2.0 * r;   // the last size tried above it failed
                     break;
@@ -3221,7 +3339,7 @@ static bool OS3DFilletBuilds(const TopoDS_Shape &shape,
         }
         for (int step = 0; step < 7; ++step) {
             const double mid = 0.5 * (lo + hi);
-            if (OS3DFilletBuilds(shape->_shape, edgeMap, qualified, mid)) {
+            if (OS3DBlendBuilds(shape->_shape, edgeMap, qualified, mid, isFillet)) {
                 lo = mid;
             } else {
                 hi = mid;
@@ -4963,6 +5081,180 @@ static bool OS3DPlausibleSectionCounts(NSData *data) {
                        angularDeflection:(double)angularDeflection
                         linearDeflection:(double)linearDeflection {
     return TessellateShape(shape->_shape, linearDeflection, angularDeflection);
+}
+
+
+// MARK: - Measure
+
+/// The piece a Measure call names: the whole shape (0), face (1) or edge (2)
+/// `index` in the shared 1-based indexed-map order. Null when it is missing.
+static TopoDS_Shape OS3DMeasurePiece(const TopoDS_Shape &shape, NSInteger kind, NSInteger index) {
+    if (shape.IsNull()) return TopoDS_Shape();
+    if (kind == 0) return shape;
+    TopTools_IndexedMapOfShape map;
+    TopExp::MapShapes(shape, kind == 1 ? TopAbs_FACE : TopAbs_EDGE, map);
+    if (index < 1 || index > map.Extent()) return TopoDS_Shape();
+    return map((Standard_Integer)index);
+}
+
+static void OS3DPut(double *row, int at, const gp_XYZ &v) {
+    row[at] = v.X(); row[at + 1] = v.Y(); row[at + 2] = v.Z();
+}
+
++ (nullable NSData *)measureGeometryOfShape:(OCCTShape *)shape
+                                       kind:(NSInteger)kind
+                                      index:(NSInteger)index {
+    if (shape == nil) return nil;
+    try {
+        const TopoDS_Shape piece = OS3DMeasurePiece(shape->_shape, kind, index);
+        if (piece.IsNull()) return nil;
+        double row[20] = {0};
+        row[0] = (double)kind;
+        if (kind == 0) {
+            // The volume from the Gauss–Kronrod rule (as `volumeOfShape`);
+            // the centre of gravity from the classic adaptive rule. GK's
+            // centre is off on seamed curved faces: a ring at x = 20 came
+            // back centred at x = 23.5 with its volume exact.
+            GProp_GProps gk;
+            BRepGProp::VolumePropertiesGK(piece, gk, 1e-7, Standard_False, Standard_True);
+            GProp_GProps classic;
+            BRepGProp::VolumeProperties(piece, classic, 1e-7, Standard_False);
+            row[1] = gk.Mass();
+            OS3DPut(row, 2, classic.CentreOfMass().XYZ());
+        } else if (kind == 1) {
+            const TopoDS_Face face = TopoDS::Face(piece);
+            BRepAdaptor_Surface surf(face);
+            GProp_GProps props;
+            const bool planar = surf.GetType() == GeomAbs_Plane;
+            if (planar) {
+                BRepGProp::SurfaceProperties(face, props, 1e-7);
+            } else {
+                BRepGProp::SurfaceProperties(face, props);
+            }
+            double area = props.Mass();
+            if (!planar) {
+                const double exact = OS3DSpanExactArea(face);
+                if (exact > 0.0) area = exact;
+            }
+            row[2] = area;
+            OS3DPut(row, 3, props.CentreOfMass().XYZ());
+            // A point ON the face, nearest its centroid: an annulus's
+            // centroid sits in its hole, and a pin finds the face again by
+            // the point it stored.
+            {
+                const TopoDS_Shape centre = BRepBuilderAPI_MakeVertex(props.CentreOfMass()).Shape();
+                BRepExtrema_DistShapeShape onFace(centre, face);
+                if (onFace.IsDone() && onFace.NbSolution() > 0) {
+                    OS3DPut(row, 14, onFace.PointOnShape2(1).XYZ());
+                } else {
+                    OS3DPut(row, 14, props.CentreOfMass().XYZ());
+                }
+            }
+            switch (surf.GetType()) {
+                case GeomAbs_Plane: {
+                    row[1] = 0;
+                    // Outward, from the face's own parametrisation (see faceInfo).
+                    Standard_Real u0 = 0, u1 = 0, v0 = 0, v1 = 0;
+                    BRepTools::UVBounds(face, u0, u1, v0, v1);
+                    BRepGProp_Face oriented(face);
+                    gp_Pnt at; gp_Vec nv;
+                    oriented.Normal((u0 + u1) / 2, (v0 + v1) / 2, at, nv);
+                    gp_Dir normal = surf.Plane().Axis().Direction();
+                    if (nv.Magnitude() > 1e-12) {
+                        normal = gp_Dir(nv);
+                    } else if (face.Orientation() == TopAbs_REVERSED) {
+                        normal.Reverse();
+                    }
+                    OS3DPut(row, 6, surf.Plane().Location().XYZ());
+                    OS3DPut(row, 9, normal.XYZ());
+                    break;
+                }
+                case GeomAbs_Cylinder: {
+                    const gp_Cylinder c = surf.Cylinder();
+                    row[1] = 1;
+                    OS3DPut(row, 6, c.Location().XYZ());
+                    OS3DPut(row, 9, c.Axis().Direction().XYZ());
+                    row[12] = c.Radius();
+                    break;
+                }
+                case GeomAbs_Cone: {
+                    const gp_Cone c = surf.Cone();
+                    row[1] = 2;
+                    OS3DPut(row, 6, c.Apex().XYZ());
+                    OS3DPut(row, 9, c.Axis().Direction().XYZ());
+                    row[12] = c.SemiAngle();
+                    row[13] = c.RefRadius();
+                    break;
+                }
+                case GeomAbs_Sphere: {
+                    const gp_Sphere c = surf.Sphere();
+                    row[1] = 3;
+                    OS3DPut(row, 6, c.Location().XYZ());
+                    row[12] = c.Radius();
+                    break;
+                }
+                default:
+                    row[1] = 4;
+                    break;
+            }
+        } else {
+            const TopoDS_Edge edge = TopoDS::Edge(piece);
+            if (BRep_Tool::Degenerated(edge)) return nil;
+            BRepAdaptor_Curve curve(edge);
+            const double first = curve.FirstParameter(), last = curve.LastParameter();
+            row[2] = GCPnts_AbscissaPoint::Length(curve, first, last);
+            OS3DPut(row, 3, curve.Value(first).XYZ());
+            OS3DPut(row, 6, curve.Value(last).XYZ());
+            // The middle by arc length (as edgeMidpoints).
+            {
+                GCPnts_AbscissaPoint half(curve, row[2] / 2.0, first);
+                OS3DPut(row, 16, (half.IsDone() ? curve.Value(half.Parameter())
+                                                : curve.Value((first + last) / 2.0)).XYZ());
+            }
+            switch (curve.GetType()) {
+                case GeomAbs_Line:
+                    row[1] = 0;
+                    break;
+                case GeomAbs_Circle: {
+                    const gp_Circ c = curve.Circle();
+                    row[1] = 1;
+                    OS3DPut(row, 9, c.Location().XYZ());
+                    OS3DPut(row, 12, c.Axis().Direction().XYZ());
+                    row[15] = c.Radius();
+                    break;
+                }
+                default:
+                    row[1] = 2;
+                    break;
+            }
+        }
+        return [NSData dataWithBytes:row length:sizeof(row)];
+    } catch (...) {
+        return nil;
+    }
+}
+
++ (nullable NSData *)minimumDistanceBetweenShape:(OCCTShape *)a
+                                            kind:(NSInteger)kindA
+                                           index:(NSInteger)indexA
+                                        andShape:(OCCTShape *)b
+                                            kind:(NSInteger)kindB
+                                           index:(NSInteger)indexB {
+    if (a == nil || b == nil) return nil;
+    try {
+        const TopoDS_Shape pa = OS3DMeasurePiece(a->_shape, kindA, indexA);
+        const TopoDS_Shape pb = OS3DMeasurePiece(b->_shape, kindB, indexB);
+        if (pa.IsNull() || pb.IsNull()) return nil;
+        BRepExtrema_DistShapeShape dist(pa, pb);
+        if (!dist.IsDone() || dist.NbSolution() < 1) return nil;
+        double row[7];
+        row[0] = dist.Value();
+        OS3DPut(row, 1, dist.PointOnShape1(1).XYZ());
+        OS3DPut(row, 4, dist.PointOnShape2(1).XYZ());
+        return [NSData dataWithBytes:row length:sizeof(row)];
+    } catch (...) {
+        return nil;
+    }
 }
 
 @end
