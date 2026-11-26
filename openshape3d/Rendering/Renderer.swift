@@ -321,6 +321,7 @@ final class Renderer: NSObject, MTKViewDelegate {
             if onSketchPlane { encoder.setDepthBias(-4, slopeScale: -2, clamp: -1e-4) }
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
             if onSketchPlane { encoder.setDepthBias(0, slopeScale: 0, clamp: 0) }
+            drawGridNormalAxis(encoder: encoder, frame: frame)
         }
 
         // 4a. Image quads (Insert Image): blended, depth read, no depth write.
@@ -904,6 +905,44 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         return frame
+    }
+
+    /// The third world axis, standing out of the grid from the origin: the
+    /// grid shader colours the two in its plane; this draws the one along
+    /// its normal (Y on the ground grid), positive half only, in that axis's
+    /// colour. Only for a grid through the world origin — a sketch on a face
+    /// has no origin of its own to stand it on.
+    static func gridNormalAxis(origin: SIMD3<Float>, xAxis: SIMD3<Float>, yAxis: SIMD3<Float>,
+                               length: Float) -> (from: SIMD3<Float>, to: SIMD3<Float>, color: SIMD4<Float>)? {
+        var normal = simd_normalize(simd_cross(xAxis, yAxis))
+        guard abs(simd_dot(origin, normal)) < 1e-3, simd_length(origin) < 1e-3 else { return nil }
+        let a = abs(normal)
+        let dominant = a.x >= a.y && a.x >= a.z ? 0 : (a.y >= a.z ? 1 : 2)
+        if normal[dominant] < 0 { normal = -normal }
+        let color = OrientationCubeRenderer.axisColors[dominant]
+        return (.zero, normal * length, color)
+    }
+
+    private func drawGridNormalAxis(encoder: MTLRenderCommandEncoder, frame: FrameUniforms) {
+        let x = SIMD3(frame.gridXAxis.x, frame.gridXAxis.y, frame.gridXAxis.z)
+        let y = SIMD3(frame.gridYAxis.x, frame.gridYAxis.y, frame.gridYAxis.z)
+        let o = SIMD3(frame.gridOrigin.x, frame.gridOrigin.y, frame.gridOrigin.z)
+        guard let axis = Self.gridNormalAxis(origin: o, xAxis: x, yAxis: y,
+                                             length: frame.gridParams.z * 0.6) else { return }
+        var points = [axis.from, axis.to]
+        var body = BodyUniforms()
+        body.modelMatrix = matrix_identity_float4x4
+        body.baseColor = SIMD4(axis.color.x, axis.color.y, axis.color.z, 0.9)
+        let pipelines = context.pipelines
+        encoder.setRenderPipelineState(pipelines.unlitColor)
+        encoder.setDepthStencilState(pipelines.depthReadOnly)
+        encoder.setVertexBytes(&points, length: MemoryLayout<SIMD3<Float>>.stride * 2,
+                               index: Int(BufferIndexPositions.rawValue))
+        encoder.setVertexBytes(&body, length: MemoryLayout<BodyUniforms>.stride,
+                               index: Int(BufferIndexBodyUniforms.rawValue))
+        encoder.setFragmentBytes(&body, length: MemoryLayout<BodyUniforms>.stride,
+                                 index: Int(BufferIndexBodyUniforms.rawValue))
+        encoder.drawPrimitives(type: .line, vertexStart: 0, vertexCount: 2)
     }
 
     /// Decals (spec §14): each decal's body drawn again — its own triangles

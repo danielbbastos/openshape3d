@@ -110,6 +110,17 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
+                    Picker("Finger Taps Select", selection: $settings.fingerTapSelection) {
+                        ForEach(FingerTapSelection.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .accessibilityIdentifier("SettingsFingerTapSelection")
+                    Text("Off: a finger only navigates (a double-tap sketches on the face) and "
+                         + "the Apple Pencil selects. Automatic turns finger selection off once "
+                         + "a Pencil has been used.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     Toggle("Menu Button Labels", isOn: $settings.menuButtonLabels)
                         .accessibilityIdentifier("SettingsMenuButtonLabels")
 

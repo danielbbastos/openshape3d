@@ -203,17 +203,25 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
     private var pivotDragGrab = SIMD3<Float>.zero
     private var pivotDragNormal = SIMD3<Float>(0, 0, 1)
 
-    func gestureTapped(at point: CGPoint, shift: Bool) {
+    func gestureTapped(at point: CGPoint, shift: Bool, input: TapInputKind) {
         viewModel.tapShiftHeld = shift
-        defer { viewModel.tapShiftHeld = false }
+        viewModel.tapInput = input
+        defer {
+            viewModel.tapShiftHeld = false
+            viewModel.tapInput = .pointer
+        }
         gestureTapped(at: point)
     }
 
     func gestureTapped(at point: CGPoint) {
-        // Orientation cube first: taps on it never reach the model.
+        // Orientation cube first: taps on it never reach the model. A finger
+        // lands on the nearest FACE (Shapr3D ignores edges and corners under
+        // a fingertip); the Pencil or a pointer can pick an edge (a 45° view)
+        // or a corner (an isometric one).
         if let renderer, let view,
            let pose = OrientationCube.hitPose(
-               at: point, camera: renderer.camera, viewSize: view.bounds.size
+               at: point, camera: renderer.camera, viewSize: view.bounds.size,
+               facesOnly: viewModel.tapInput == .finger
            ) {
             // A face defines the sketch plane and flattens, like a named view.
             let eye = pose.position - pose.target
@@ -360,18 +368,18 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
             at: point, armed: viewModel.gizmoRepositionArmed, project: project)
     }
 
-    func gestureDoubleTapped(at point: CGPoint, byFinger: Bool) {
+    func gestureDoubleTapped(at point: CGPoint, input: TapInputKind) {
         // Double-tapping the orientation cube resets to the default view
         // (spec §7.2), like Views ▸ Isometric; a single tap snaps to the face,
         // edge or corner under it.
         if let renderer, let view,
            OrientationCube.hitPose(at: point, camera: renderer.camera, viewSize: view.bounds.size) != nil {
-            viewModel.applyStandardView(.isometric)
+            viewModel.resetToDefaultView()
             return
         }
         guard let ray = ray(at: point) else { return }
-        viewModel.doubleTapFromFinger = byFinger
-        defer { viewModel.doubleTapFromFinger = false }
+        viewModel.tapInput = input
+        defer { viewModel.tapInput = .pointer }
         viewModel.handle(.doubleTap(ray: ray))
     }
 
@@ -1043,9 +1051,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
     /// View ▸ Field of View: a perspective angle, or orthographic at 0.
     func setFieldOfView(degrees: Double) {
         guard let renderer else { return }
-        renderer.camera.projection = degrees < 1
-            ? .orthographic
-            : .perspective(fovY: Float(degrees * .pi / 180))
+        renderer.camera.setFieldOfView(degrees: degrees)
         view?.setNeedsDisplay()
         cameraDidMove()
     }
@@ -1120,6 +1126,12 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
     func orientationCubeLabels() -> [OrientationCube.FaceLabel] {
         guard let renderer, let view else { return [] }
         return OrientationCube.faceLabels(
+            camera: renderer.camera, viewSize: view.bounds.size)
+    }
+
+    func orientationCubeAxisLabels() -> [OrientationCube.FaceLabel] {
+        guard let renderer, let view else { return [] }
+        return OrientationCube.axisLabels(
             camera: renderer.camera, viewSize: view.bounds.size)
     }
 
