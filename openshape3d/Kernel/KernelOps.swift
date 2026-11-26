@@ -1052,6 +1052,19 @@ nonisolated extension KernelOps {
         }
     }
 
+    /// `faceContainment` for callers outside the mesh path — the B-rep face
+    /// deform picks its moving vertices with this, so the exact result and the
+    /// live preview agree about which corners move.
+    static func faceContains(_ face: FaceTopology.PlanarFace) -> (SIMD3<Double>) -> Bool {
+        faceContainment(face)
+    }
+
+    /// `faceCentroid` as a plain vector (no Euclid type in the signature).
+    static func faceCentroidPoint(_ face: FaceTopology.PlanarFace) -> SIMD3<Double> {
+        let c = faceCentroid(face)
+        return SIMD3(c.x, c.y, c.z)
+    }
+
     /// The face's centroid in world space — scale/rotate deform about it.
     static func faceCentroid(_ face: FaceTopology.PlanarFace) -> Vector {
         let plane = SketchPlane(

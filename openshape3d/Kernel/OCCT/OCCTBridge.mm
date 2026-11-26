@@ -84,6 +84,7 @@
 #include <Geom_CylindricalSurface.hxx>
 #include <Geom2d_Line.hxx>
 #include <BRepLib.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <gp_Ax3.hxx>
 #include <BRepBuilderAPI_TransitionMode.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
@@ -3440,6 +3441,319 @@ static double OS3DVolume(const TopoDS_Shape &shape) {
         if (single.IsNull()) {
             OS3DSetStatus(status, OCCTOpCodeMultiSolid,
                           @"draft: the result is not a single solid");
+            return nil;
+        }
+        OS3DSetStatus(status, OCCTOpCodeOK, nil);
+        OCCTShape *out = [OCCTShape new];
+        out->_shape = single;
+        return out;
+    } catch (Standard_Failure &e) {
+        OS3DSetStatus(status, OCCTOpCodeKernelRefused,
+                      [NSString stringWithFormat:@"%s", e.GetMessageString()]);
+        return nil;
+    } catch (...) {
+        OS3DSetStatus(status, OCCTOpCodeKernelRefused, @"kernel exception");
+        return nil;
+    }
+}
+
++ (NSData *)vertexPositionsOfShape:(OCCTShape *)shape {
+    NSMutableData *out = [NSMutableData data];
+    if (shape == nil || shape->_shape.IsNull()) return out;
+    try {
+        int solids = 0;
+        TopoDS_Shape input = OS3DExtractSingleSolid(shape->_shape, solids);
+        if (input.IsNull()) input = shape->_shape;
+        TopTools_IndexedMapOfShape vertices;
+        TopExp::MapShapes(input, TopAbs_VERTEX, vertices);
+        for (Standard_Integer i = 1; i <= vertices.Extent(); i++) {
+            const gp_Pnt p = BRep_Tool::Pnt(TopoDS::Vertex(vertices(i)));
+            const double xyz[3] = {p.X(), p.Y(), p.Z()};
+            [out appendBytes:xyz length:sizeof xyz];
+        }
+    } catch (...) {
+        return [NSData data];
+    }
+    return out;
+}
+
+// Newell's polygon normal: robust for any simple loop, and its sign follows
+// the loop's winding — which is the whole point here.
+static gp_XYZ OS3DNewell(const std::vector<gp_Pnt> &loop) {
+    gp_XYZ n(0, 0, 0);
+    const size_t count = loop.size();
+    for (size_t i = 0; i < count; i++) {
+        const gp_Pnt &a = loop[i];
+        const gp_Pnt &b = loop[(i + 1) % count];
+        n.SetX(n.X() + (a.Y() - b.Y()) * (a.Z() + b.Z()));
+        n.SetY(n.Y() + (a.Z() - b.Z()) * (a.X() + b.X()));
+        n.SetZ(n.Z() + (a.X() - b.X()) * (a.Y() + b.Y()));
+    }
+    return n;
+}
+
++ (nullable OCCTShape *)shapeByTransformingVertices:(OCCTShape *)shape
+                                      vertexIndices:(NSData *)vertexIndices
+                                             matrix:(NSData *)matrix
+                                          tolerance:(double)tolerance
+                                             status:(nullable OCCTOpStatus *)status {
+    OS3DSetStatus(status, OCCTOpCodeKernelRefused, @"no input");
+    const NSUInteger count = vertexIndices.length / sizeof(int32_t);
+    if (shape == nil || count == 0 || matrix.length != 12 * sizeof(double)) return nil;
+    const int32_t *indices = (const int32_t *)vertexIndices.bytes;
+    const double *m = (const double *)matrix.bytes;
+    // How far a rebuilt face may stray from its new plane. Exact moves land
+    // at rounding noise; a twisted wall misses by millimetres.
+    const double planeTolerance = std::max(1e-6, std::min(tolerance, 1e-4));
+
+    try {
+        if (!OS3DFiniteBounds(shape->_shape)) {
+            OS3DSetStatus(status, OCCTOpCodeKernelRefused,
+                          @"the body has empty or non-finite geometry");
+            return nil;
+        }
+        int inputSolids = 0;
+        const TopoDS_Shape input = OS3DExtractSingleSolid(shape->_shape, inputSolids);
+        if (input.IsNull()) {
+            OS3DSetStatus(status, OCCTOpCodeKernelRefused,
+                          @"face deform: the body is not a single solid");
+            return nil;
+        }
+        gp_Trsf trsf;
+        trsf.SetValues(m[0], m[1], m[2], m[3],
+                       m[4], m[5], m[6], m[7],
+                       m[8], m[9], m[10], m[11]);
+
+        TopTools_IndexedMapOfShape vertexMap;
+        TopExp::MapShapes(input, TopAbs_VERTEX, vertexMap);
+        std::vector<bool> moved(vertexMap.Extent() + 1, false);
+        for (NSUInteger k = 0; k < count; k++) {
+            const Standard_Integer i = indices[k] + 1;
+            if (i < 1 || i > vertexMap.Extent()) {
+                OS3DSetStatus(status, OCCTOpCodeKernelRefused,
+                              @"face deform: vertex index out of range");
+                return nil;
+            }
+            moved[i] = true;
+        }
+        auto isMoved = [&](const TopoDS_Shape &v) {
+            const Standard_Integer i = vertexMap.FindIndex(v);
+            return i > 0 && moved[i];
+        };
+
+        // Each face is kept (no corner moves), carried whole by the
+        // transform (every corner moves), or rebuilt on a new plane.
+        TopTools_IndexedMapOfShape faceMap;
+        TopExp::MapShapes(input, TopAbs_FACE, faceMap);
+        enum { kKept = 0, kCarried = 1, kRebuilt = 2 };
+        std::vector<int> kind(faceMap.Extent() + 1, kKept);
+        int carriedCount = 0, rebuiltCount = 0;
+        for (Standard_Integer f = 1; f <= faceMap.Extent(); f++) {
+            TopTools_IndexedMapOfShape corners;
+            TopExp::MapShapes(faceMap(f), TopAbs_VERTEX, corners);
+            int movedCorners = 0;
+            for (Standard_Integer c = 1; c <= corners.Extent(); c++) {
+                if (isMoved(corners(c))) movedCorners++;
+            }
+            if (movedCorners == 0) continue;
+            if (movedCorners == corners.Extent()) {
+                kind[f] = kCarried;
+                carriedCount++;
+            } else {
+                kind[f] = kRebuilt;
+                rebuiltCount++;
+            }
+        }
+        if (carriedCount + rebuiltCount == 0) {
+            OS3DSetStatus(status, OCCTOpCodeNoTargetMatched,
+                          @"face deform: no face has a moving corner");
+            return nil;
+        }
+
+        BRep_Builder builder;
+        // Images, keyed by the old sub-shape (IsSame), stored in the old
+        // shape's FORWARD sense.
+        TopTools_DataMapOfShapeShape newVertex, newEdge, newFace;
+
+        // Carried faces go through the transform TOGETHER, so an edge two of
+        // them share stays one edge.
+        std::unique_ptr<BRepBuilderAPI_Transform> carrier;
+        if (carriedCount > 0) {
+            TopoDS_Compound carried;
+            builder.MakeCompound(carried);
+            for (Standard_Integer f = 1; f <= faceMap.Extent(); f++) {
+                if (kind[f] == kCarried) builder.Add(carried, faceMap(f));
+            }
+            carrier.reset(new BRepBuilderAPI_Transform(trsf));
+            OS3D_GUARDED(status, "face deform", carrier->Perform(carried, Standard_True));
+            if (!carrier->IsDone()) {
+                OS3DSetStatus(status, OCCTOpCodeKernelRefused,
+                              @"face deform: the face could not be transformed");
+                return nil;
+            }
+            TopTools_IndexedMapOfShape carriedEdges, carriedVertices;
+            TopExp::MapShapes(carried, TopAbs_EDGE, carriedEdges);
+            TopExp::MapShapes(carried, TopAbs_VERTEX, carriedVertices);
+            for (Standard_Integer i = 1; i <= carriedEdges.Extent(); i++) {
+                const TopoDS_Shape e = carriedEdges(i).Oriented(TopAbs_FORWARD);
+                newEdge.Bind(e, carrier->ModifiedShape(e));
+            }
+            for (Standard_Integer i = 1; i <= carriedVertices.Extent(); i++) {
+                const TopoDS_Shape v = carriedVertices(i).Oriented(TopAbs_FORWARD);
+                newVertex.Bind(v, carrier->ModifiedShape(v));
+            }
+            for (Standard_Integer f = 1; f <= faceMap.Extent(); f++) {
+                if (kind[f] != kCarried) continue;
+                const TopoDS_Shape face = faceMap(f).Oriented(TopAbs_FORWARD);
+                newFace.Bind(face, carrier->ModifiedShape(face));
+            }
+        }
+
+        NSString *why = nil;
+        auto imageVertex = [&](const TopoDS_Vertex &v) -> TopoDS_Vertex {
+            if (!isMoved(v)) return v;
+            if (newVertex.IsBound(v)) return TopoDS::Vertex(newVertex.Find(v));
+            TopoDS_Vertex nv;
+            builder.MakeVertex(nv, BRep_Tool::Pnt(v).Transformed(trsf), BRep_Tool::Tolerance(v));
+            newVertex.Bind(v, nv);
+            return nv;
+        };
+        auto imageEdge = [&](const TopoDS_Edge &e) -> TopoDS_Edge {
+            if (newEdge.IsBound(e)) return TopoDS::Edge(newEdge.Find(e));
+            TopoDS_Vertex v1, v2;
+            TopExp::Vertices(TopoDS::Edge(e.Oriented(TopAbs_FORWARD)), v1, v2);
+            const bool m1 = !v1.IsNull() && isMoved(v1);
+            const bool m2 = !v2.IsNull() && isMoved(v2);
+            if (!m1 && !m2) {
+                const TopoDS_Edge same = TopoDS::Edge(e.Oriented(TopAbs_FORWARD));
+                newEdge.Bind(e, same);
+                return same;
+            }
+            BRepAdaptor_Curve curve(e);
+            if (curve.GetType() != GeomAbs_Line) {
+                why = @"face deform: a curved edge running off the face would have to bend";
+                return TopoDS_Edge();
+            }
+            const TopoDS_Vertex n1 = imageVertex(v1), n2 = imageVertex(v2);
+            if (BRep_Tool::Pnt(n1).Distance(BRep_Tool::Pnt(n2)) < 1e-7) {
+                why = @"face deform: an edge would shrink to nothing";
+                return TopoDS_Edge();
+            }
+            BRepBuilderAPI_MakeEdge mk(n1, n2);
+            if (!mk.IsDone()) {
+                why = @"face deform: an edge could not be rebuilt";
+                return TopoDS_Edge();
+            }
+            const TopoDS_Edge out = mk.Edge();
+            newEdge.Bind(e, out);
+            return out;
+        };
+        auto rebuildFace = [&](const TopoDS_Face &old) -> TopoDS_Face {
+            const TopoDS_Face oldF = TopoDS::Face(old.Oriented(TopAbs_FORWARD));
+            BRepAdaptor_Surface surface(oldF, Standard_False);
+            if (surface.GetType() != GeomAbs_Plane) {
+                why = @"face deform: a curved face beside the moved one would have to bend";
+                return TopoDS_Face();
+            }
+            const gp_Dir oldAxis = surface.Plane().Axis().Direction();
+            std::vector<gp_Pnt> oldLoop, newLoop;
+            const TopoDS_Wire outer = BRepTools::OuterWire(oldF);
+            for (BRepTools_WireExplorer wx(outer, oldF); wx.More(); wx.Next()) {
+                const TopoDS_Vertex v = wx.CurrentVertex();
+                oldLoop.push_back(BRep_Tool::Pnt(v));
+                newLoop.push_back(BRep_Tool::Pnt(imageVertex(v)));
+            }
+            const gp_XYZ before = OS3DNewell(oldLoop), after = OS3DNewell(newLoop);
+            if (oldLoop.size() < 3 || before.Modulus() < 1e-12 || after.Modulus() < 1e-12) {
+                why = @"face deform: a face beside the moved one has no plane to rebuild on";
+                return TopoDS_Face();
+            }
+            const double sense = before.Dot(oldAxis.XYZ()) >= 0 ? 1.0 : -1.0;
+            const gp_Dir axis(after * sense);
+            Handle(Geom_Plane) plane = new Geom_Plane(newLoop[0], axis);
+
+            TopoDS_Face nf;
+            builder.MakeFace(nf, plane, BRep_Tool::Tolerance(oldF));
+            for (TopoDS_Iterator wi(oldF, Standard_False); wi.More(); wi.Next()) {
+                if (wi.Value().ShapeType() != TopAbs_WIRE) continue;
+                const TopoDS_Wire w = TopoDS::Wire(wi.Value());
+                TopoDS_Wire nw;
+                builder.MakeWire(nw);
+                for (TopoDS_Iterator ei(w, Standard_False); ei.More(); ei.Next()) {
+                    const TopoDS_Edge e = TopoDS::Edge(ei.Value());
+                    const TopoDS_Edge ne = imageEdge(e);
+                    if (ne.IsNull()) return TopoDS_Face();
+                    builder.Add(nw, ne.Oriented(e.Orientation()));
+                }
+                nw.Closed(w.Closed());
+                builder.Add(nf, nw.Oriented(w.Orientation()));
+            }
+            // Still flat? Every edge, curved ones included, must lie on the
+            // new plane — this is where a twisted wall is caught.
+            const gp_Pln pln = plane->Pln();
+            for (TopExp_Explorer ex(nf, TopAbs_EDGE); ex.More(); ex.Next()) {
+                const TopoDS_Edge e = TopoDS::Edge(ex.Current());
+                BRepAdaptor_Curve c(e);
+                for (int s = 0; s <= 4; s++) {
+                    const double t = c.FirstParameter()
+                        + (c.LastParameter() - c.FirstParameter()) * s / 4.0;
+                    if (pln.Distance(c.Value(t)) > planeTolerance) {
+                        why = @"face deform: a face beside the moved one would stop being flat";
+                        return TopoDS_Face();
+                    }
+                }
+            }
+            for (TopExp_Explorer ex(nf, TopAbs_EDGE); ex.More(); ex.Next()) {
+                BRepLib::BuildPCurveForEdgeOnPlane(TopoDS::Edge(ex.Current()), nf);
+            }
+            return nf;
+        };
+
+        for (Standard_Integer f = 1; f <= faceMap.Extent(); f++) {
+            if (kind[f] != kRebuilt) continue;
+            TopoDS_Face nf;
+            OS3D_GUARDED(status, "face deform", nf = rebuildFace(TopoDS::Face(faceMap(f))));
+            if (nf.IsNull()) {
+                OS3DSetStatus(status, OCCTOpCodeKernelRefused,
+                              why ?: @"face deform: a face could not be rebuilt");
+                return nil;
+            }
+            newFace.Bind(faceMap(f).Oriented(TopAbs_FORWARD), nf);
+        }
+
+        // Same shells, same face order, images swapped in.
+        TopoDS_Solid solid;
+        builder.MakeSolid(solid);
+        for (TopoDS_Iterator si(input, Standard_False); si.More(); si.Next()) {
+            if (si.Value().ShapeType() != TopAbs_SHELL) continue;
+            const TopoDS_Shape shell = si.Value();
+            TopoDS_Shell ns;
+            builder.MakeShell(ns);
+            for (TopoDS_Iterator fi(shell, Standard_False); fi.More(); fi.Next()) {
+                const TopoDS_Shape f = fi.Value();
+                builder.Add(ns, newFace.IsBound(f)
+                                    ? newFace.Find(f).Oriented(f.Orientation()) : f);
+            }
+            ns.Closed(shell.Closed());
+            builder.Add(solid, ns.Oriented(shell.Orientation()));
+        }
+
+        const TopoDS_Shape valid = OS3DHealAndValidate(solid);
+        if (valid.IsNull()) {
+            OS3DSetStatus(status, OCCTOpCodeInvalidResult,
+                          @"face deform: the deformed solid failed validity checking");
+            return nil;
+        }
+        int outSolids = 0;
+        const TopoDS_Shape single = OS3DExtractSingleSolid(valid, outSolids);
+        if (single.IsNull()) {
+            OS3DSetStatus(status, OCCTOpCodeMultiSolid,
+                          @"face deform: the result is not a single solid");
+            return nil;
+        }
+        if (OS3DVolume(single) <= 1e-9) {
+            OS3DSetStatus(status, OCCTOpCodeInvalidResult,
+                          @"face deform: the deformed solid turned inside out");
             return nil;
         }
         OS3DSetStatus(status, OCCTOpCodeOK, nil);

@@ -458,6 +458,32 @@ typedef NS_ENUM(NSInteger, OCCTOpCode) {
                            tolerance:(double)tolerance
                               status:(nullable OCCTOpStatus *)status;
 
+/// Every vertex of the body's (single) solid, packed xyz doubles in
+/// indexed-map order: vertex `i` of `shapeByTransformingVertices:` is the
+/// i-th triple here. Empty for a nil or empty shape.
++ (NSData *)vertexPositionsOfShape:(OCCTShape *)shape;
+
+/// Face deformation kept exact (Move / Scale / Rotate Face): the vertices
+/// named by `vertexIndices` (packed int32, 0-based into
+/// `vertexPositionsOfShape:`) move by the similarity `matrix` (12 doubles,
+/// row-major 3 × 4: rotation·scale | translation), and the solid is rebuilt
+/// around them with its topology unchanged — the B-rep twin of the mesh
+/// path's "move the face's vertices, the walls follow".
+///
+/// A face whose vertices ALL move is carried by the transform whole (curved
+/// edges and holes included). A face with SOME moved vertices must be planar,
+/// its moved-to-fixed edges straight, and it must still be planar afterwards
+/// (a prism wall under a lateral move, scale or edge-parallel tilt is; a
+/// twisted wall is not); it gets a new plane through its new corners. Faces
+/// with no moved vertex are kept as they are. Nil, with `status` saying why,
+/// when a face would have to bend or the result fails validation — the
+/// caller falls back to the mesh deform.
++ (nullable OCCTShape *)shapeByTransformingVertices:(OCCTShape *)shape
+                                      vertexIndices:(NSData *)vertexIndices
+                                             matrix:(NSData *)matrix
+                                          tolerance:(double)tolerance
+                                             status:(nullable OCCTOpStatus *)status;
+
 /// Identity-addressed blends (docs/TOPO_NAMING_HISTORY_DESIGN.md step 4b):
 /// same pre-qualification, per-edge checks and validation as the
 /// point-matched entries — the two share one implementation — but edges are
