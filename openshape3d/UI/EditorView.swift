@@ -980,8 +980,8 @@ struct EditorView: View {
             }
             .accessibilityIdentifier("ImportFreeCAD")
             // Textured meshes: glTF/GLB, USDZ, OBJ with its MTL and images, .blend,
-            // or a zip holding any of them. Parts become mesh bodies.
-            Button("OBJ / glTF / USDZ / Blender…") {
+            // 3MF, or a zip holding any of them. Parts become mesh bodies.
+            Button("OBJ / glTF / USDZ / 3MF / Blender…") {
                 importRequest = .mesh
                 showImporter = true
             }
@@ -1370,10 +1370,13 @@ struct EditorView: View {
                         .padding(.top, 8)
                     }
                 } else if showAssistantPanel {
+                    // No inset for the bottom bars: on an iPhone in landscape
+                    // that would leave the panel about 100 pt of height. Like
+                    // the Items panel it may reach down beside them.
                     AssistantPanelView(session: assistant) { showAssistantPanel = false }
                         .padding(.trailing, 14)
                         .padding(.top, 8)
-                        .padding(.bottom, bottomBarInset)
+                        .padding(.bottom, 8)
                 } else if showItemsPanel {
                     ItemsPanelView(viewModel: viewModel)
                         .padding(.trailing, 14)
@@ -1971,7 +1974,8 @@ struct EditorView: View {
                         .contentShape(Rectangle())
                         .accessibilityLabel("Undo")
                     }
-                    .disabled(!viewModel.session.undoStack.canUndo && !viewModel.hasPendingRectangle)
+                    .disabled(!viewModel.session.undoStack.canUndo && !viewModel.hasPendingRectangle
+                              && !viewModel.hasPendingShapeTap)
                     // Distinct from the software keyboard's own "Undo": with
                     // only a label to match on, `app.buttons["Undo"]` found two
                     // elements and every single-element query threw.
