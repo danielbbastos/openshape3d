@@ -38,6 +38,12 @@ nonisolated struct SelectableEdge: Equatable, Sendable {
 }
 
 nonisolated enum EdgeTopology {
+    /// The weld key `selectableEdges` uses, for code that must agree with it.
+    static func weldKey(_ p: SIMD3<Float>) -> SIMD3<Int64> {
+        let k = PositionKey(p)
+        return SIMD3(k.x, k.y, k.z)
+    }
+
     /// Position welding quantum (matches FeatureEdgeExtractor).
     private static let quantum: Float = 1e-5
 
@@ -117,14 +123,31 @@ nonisolated enum EdgeTopology {
             edgeFaces[EdgeKey(t2, t0), default: []].append(EdgeSide(normal: normal, forward: t2 < t0))
         }
 
-        // 3. Keep manifold crease edges (exactly 2 faces meeting past the
-        //    threshold). Boundary / non-manifold edges aren't chamfer-able.
+        // 3. Keep manifold edges (exactly 2 faces) that are real edges.
+        //    Boundary / non-manifold edges aren't chamfer-able. On a body
+        //    tessellated from a B-rep the kernel says which: its edges,
+        //    tangent ones included, and no bends inside one curved face.
+        //    Otherwise an edge is a crease past the threshold.
+        var kernelKeys: Set<EdgeKey>?
+        if let segments = mesh.kernelEdgeSegments {
+            var keys = Set<EdgeKey>()
+            var i = 0
+            while i + 1 < segments.count {
+                if let a = lookup[PositionKey(segments[i])], let b = lookup[PositionKey(segments[i + 1])], a != b {
+                    keys.insert(EdgeKey(a, b))
+                }
+                i += 2
+            }
+            kernelKeys = keys
+        }
         let cosThreshold = cos(angleThresholdDegrees * .pi / 180)
         let centroid = topoPositions.reduce(SIMD3<Float>(repeating: 0), +)
             / Float(max(topoPositions.count, 1))
         var raw = [RawEdge]()
         for (edge, sides) in edgeFaces where sides.count == 2 {
-            if simd_dot(sides[0].normal, sides[1].normal) < cosThreshold {
+            let isEdge = kernelKeys.map { $0.contains(edge) }
+                ?? (simd_dot(sides[0].normal, sides[1].normal) < cosThreshold)
+            if isEdge {
                 raw.append(RawEdge(
                     a: edge.a, b: edge.b,
                     normalA: sides[0].normal, normalB: sides[1].normal,
@@ -371,5 +394,20 @@ nonisolated enum EdgeTopology {
         }
         let mid = (a + b) / 2
         return simd_dot(sideA.normal + sideB.normal, mid - centroid) > 0
+    }
+}
+
+// MARK: - Kernel edges on a render mesh
+
+nonisolated extension RenderMesh {
+    /// `segments` when they describe this mesh: nearly every endpoint is one
+    /// of its vertices (welded at `EdgeTopology`'s quantum). A triangulation
+    /// the mesh wasn't built from, or no segments, gives nil, and the mesh
+    /// keeps the crease test.
+    static func matchingKernelEdges(_ segments: [SIMD3<Float>]?, on mesh: RenderMesh) -> [SIMD3<Float>]? {
+        guard let segments, !segments.isEmpty, segments.count % 2 == 0 else { return nil }
+        let vertices = Set(mesh.positions.map(EdgeTopology.weldKey))
+        let found = segments.reduce(0) { $0 + (vertices.contains(EdgeTopology.weldKey($1)) ? 1 : 0) }
+        return Double(found) >= 0.99 * Double(segments.count) ? segments : nil
     }
 }

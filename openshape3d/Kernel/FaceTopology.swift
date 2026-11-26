@@ -396,6 +396,15 @@ nonisolated enum FaceTopology {
         guard let seedN = normal(seedTriangle) else { return nil }
 
         let edgeTriangles = adjacency ?? Self.edgeAdjacency(in: mesh)
+        // A B-rep body's faces end at its edges, tangent ones included: a
+        // flat face beside a fillet is flat, and the fillet is its own face.
+        // Without this the flood ran across the fillet and called the flat
+        // face curved, which also refused the edge tap beside it.
+        var walls = Set<EdgeKey>()
+        if let segments = mesh.kernelEdgeSegments {
+            var i = 0
+            while i + 1 < segments.count { walls.insert(EdgeKey(segments[i], segments[i + 1])); i += 2 }
+        }
 
         var surface = Set<Int>()
         var queue = [seedTriangle]
@@ -405,7 +414,7 @@ nonisolated enum FaceTopology {
             surface.insert(t)
             maxDot = min(maxDot, simd_dot(nt, seedN))
             let (a, b, c) = tri(t)
-            for edge in [EdgeKey(a, b), EdgeKey(b, c), EdgeKey(c, a)] {
+            for edge in [EdgeKey(a, b), EdgeKey(b, c), EdgeKey(c, a)] where !walls.contains(edge) {
                 for nb in edgeTriangles[edge] ?? [] where !surface.contains(nb) {
                     if let nn = normal(nb), simd_dot(nn, nt) > smoothDihedralCos {
                         queue.append(nb)

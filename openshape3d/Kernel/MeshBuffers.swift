@@ -13,8 +13,9 @@ import simd
 /// Vertices are welded by (position, normal) so hard edges are preserved.
 nonisolated struct RenderMesh: Sendable, Equatable {
     var positions: [SIMD3<Float>] {
-        // A new box for the new positions; copies keep theirs.
-        didSet { aabbMemo = AABBMemo() }
+        // A new box for the new positions; copies keep theirs. Kernel edges
+        // were read off the old positions, so they go too (back to creases).
+        didSet { aabbMemo = AABBMemo(); kernelEdgeSegments = nil }
     }
     var normals: [SIMD3<Float>]
     var indices: [UInt32]
@@ -30,6 +31,13 @@ nonisolated struct RenderMesh: Sendable, Equatable {
     /// face even though it is coplanar with its neighbour. Every op that
     /// rebuilds the mesh drops it, as it does `texcoords`.
     var faceRegions: [UInt32]? = nil
+    /// The B-rep's own edges as a line list `[a0, b0, a1, b1, …]` of mesh
+    /// vertex positions, present only on a body tessellated from OCCT. When
+    /// present it decides which mesh edges are drawn and pickable, instead
+    /// of the dihedral-angle test: a fillet's tangent edge (no crease) is an
+    /// edge, and a bend between two triangles of one curved face is not.
+    /// Derived from the B-rep, so it is not part of `==` and not persisted.
+    var kernelEdgeSegments: [SIMD3<Float>]? = nil
 
     var triangleCount: Int { indices.count / 3 }
 

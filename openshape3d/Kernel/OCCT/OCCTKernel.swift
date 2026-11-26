@@ -1130,6 +1130,16 @@ nonisolated enum OCCTKernel {
                                           tolerance: tolerance)
     }
 
+    /// The largest chamfer setback the edges near `points` take (see
+    /// `maxFilletRadius`); 0 when unknown.
+    static func maxChamferDistance(_ handle: BRepHandle, at points: [SIMD3<Double>],
+                                   tolerance: Double) -> Double {
+        guard !points.isEmpty else { return 0 }
+        return OCCTBridge.maxChamferDistance(for: handle.shape,
+                                             atWorldPoints: pack(points),
+                                             tolerance: tolerance)
+    }
+
     /// Pick-matching tolerance for a B-rep body — docs/FREECAD_PLAYBOOK.md T1.
     ///
     /// The points the pickers hand the bridge are midpoints of the OCCT
@@ -1258,6 +1268,25 @@ nonisolated enum OCCTKernel {
     /// identities to mesh-derived face groups by majority vote over this.
     /// Cheap to call after `renderMesh(from:)` — the triangulation is cached
     /// on the shape, so the mesher does not run twice.
+    /// The B-rep's edges as a line list on its render mesh (see
+    /// `RenderMesh.kernelEdgeSegments`). `remesh` tessellates a mesh-free copy
+    /// with the render deflections first, leaving `handle` untouched, so it
+    /// is safe off the main thread (a document reopened without a mesh).
+    static func kernelEdgeSegments(from handle: BRepHandle, coarse: Bool = false,
+                                   remesh: Bool = false) -> [SIMD3<Float>]? {
+        guard let data = OCCTBridge.edgeSegments(
+            of: handle.shape,
+            angularDeflection: coarse ? coarseAngularDeflection : renderAngularDeflection,
+            linearDeflection: coarse ? coarseLinearDeflection : renderLinearDeflection,
+            remesh: remesh) else { return nil }
+        let f = data.floatArray()
+        guard f.count >= 6, f.count % 6 == 0 else { return nil }
+        var out = [SIMD3<Float>](); out.reserveCapacity(f.count / 3)
+        var i = 0
+        while i < f.count { out.append(SIMD3<Float>(f[i], f[i + 1], f[i + 2])); i += 3 }
+        return out
+    }
+
     static func renderMeshFaceChannel(from handle: BRepHandle) -> [UInt32] {
         OCCTBridge.renderMesh(
             from: handle.shape,
@@ -1349,6 +1378,8 @@ nonisolated extension Body {
             let regions = OCCTKernel.renderMeshFaceChannel(from: handle)
             if regions.count == mesh.triangleCount { mesh.faceRegions = regions }
         }
+        mesh.kernelEdgeSegments = RenderMesh.matchingKernelEdges(
+            OCCTKernel.kernelEdgeSegments(from: handle, coarse: coarse), on: mesh)
         brep = handle
         render = mesh
         edges = FeatureEdgeExtractor.edges(from: mesh)
