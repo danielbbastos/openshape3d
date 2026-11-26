@@ -18,10 +18,10 @@ import MetalKit
 @MainActor
 protocol ViewportGestureDelegate: AnyObject {
     func gestureTapped(at point: CGPoint)
-    /// A tap with Shift held or not (Selection Extension, spec §8.1).
-    func gestureTapped(at point: CGPoint, shift: Bool)
-    /// `byFinger`: not a mouse, trackpad or Pencil.
-    func gestureDoubleTapped(at point: CGPoint, byFinger: Bool)
+    /// A tap with Shift held or not (Selection Extension, spec §8.1), and
+    /// what made it: Shapr3D gives a finger and the Pencil different jobs.
+    func gestureTapped(at point: CGPoint, shift: Bool, input: TapInputKind)
+    func gestureDoubleTapped(at point: CGPoint, input: TapInputKind)
     /// Offered the one-finger drag at `.began`. Return true to claim it
     /// (gizmo drag, sketch stroke); false lets the camera orbit. `isPencil`
     /// distinguishes an Apple Pencil stroke from a finger so sketch mode can
@@ -39,6 +39,17 @@ protocol ViewportGestureDelegate: AnyObject {
     func gesturePencilDoubleTapped()
 }
 
+/// What made a tap. Shapr3D gives each a different job: a finger navigates
+/// (a double-tap sketches), the Pencil selects; a mouse or trackpad click
+/// selects like the Pencil and keeps the desktop's double-click rules.
+nonisolated enum TapInputKind: Equatable, Sendable {
+    case finger, pencil, pointer
+
+    init(_ tap: TapSequencer.Tap) {
+        self = tap.byPencil ? .pencil : tap.byFinger ? .finger : .pointer
+    }
+}
+
 final class ViewportGestureController: NSObject {
     weak var view: MTKView?
     weak var renderer: Renderer?
@@ -54,8 +65,9 @@ final class ViewportGestureController: NSObject {
     /// Set in shouldReceive: the one-finger drag is being driven by the Pencil.
     private var orbitTouchIsPencil = false
     private weak var tapRecognizer: UITapGestureRecognizer?
-    /// Set in shouldReceive: the tap is being made with a finger.
+    /// Set in shouldReceive: the tap is being made with a finger / a Pencil.
     private var tapIsFinger = false
+    private var tapIsPencil = false
     /// Sorts taps into single and double without dropping any.
     private var taps = TapSequencer()
     /// Where the one-finger touch actually LANDED, captured in shouldReceive
@@ -369,7 +381,8 @@ final class ViewportGestureController: NSObject {
         // or the Mac; a bare finger tap never carries it.
         let tap = TapSequencer.Tap(
             point: gesture.location(in: view), time: CACurrentMediaTime(),
-            byFinger: tapIsFinger, shift: gesture.modifierFlags.contains(.shift))
+            byFinger: tapIsFinger, shift: gesture.modifierFlags.contains(.shift),
+            byPencil: tapIsPencil)
         deliver(taps.tap(tap))
         guard taps.pending != nil else { return }
         // Not a double-tap once the window closes: deliver it as a single tap.
@@ -384,9 +397,9 @@ final class ViewportGestureController: NSObject {
         for event in events {
             switch event {
             case .single(let tap):
-                delegate?.gestureTapped(at: tap.point, shift: tap.shift)
+                delegate?.gestureTapped(at: tap.point, shift: tap.shift, input: TapInputKind(tap))
             case .double(let tap):
-                delegate?.gestureDoubleTapped(at: tap.point, byFinger: tap.byFinger)
+                delegate?.gestureDoubleTapped(at: tap.point, input: TapInputKind(tap))
             }
         }
     }
@@ -424,6 +437,9 @@ extension ViewportGestureController: UIGestureRecognizerDelegate {
     func gestureRecognizer(
         _ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch
     ) -> Bool {
+        if touch.type == .pencil, !AppSettings.shared.applePencilSeen {
+            AppSettings.shared.applePencilSeen = true
+        }
         if gestureRecognizer === orbitRecognizer {
             orbitTouchIsPencil = touch.type == .pencil
             if let view { orbitTouchDown = touch.location(in: view) }
@@ -431,8 +447,10 @@ extension ViewportGestureController: UIGestureRecognizerDelegate {
         if gestureRecognizer === tapRecognizer {
             #if targetEnvironment(macCatalyst)
             tapIsFinger = false // the Mac reports mouse clicks as direct touches
+            tapIsPencil = false
             #else
             tapIsFinger = touch.type == .direct
+            tapIsPencil = touch.type == .pencil
             #endif
         }
         return true

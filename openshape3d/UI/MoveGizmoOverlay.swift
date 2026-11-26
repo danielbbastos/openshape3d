@@ -81,7 +81,6 @@ struct MoveGizmoOverlay: View {
     @ViewBuilder
     private func scaleHandle(_ part: GizmoPart, _ ctx: ProjectionContext, center: CGPoint) -> some View {
         if let tip = GizmoScreenLayout.axisAnchor(part, project: ctx.project) {
-            let colored = viewModel.litGizmoPart == part ? Self.highlight : Self.fill
             // Direction from the head back toward the pivot; fall back to a fixed
             // heading if the head sits on top of the pivot (degenerate).
             let dx = center.x - tip.x, dy = center.y - tip.y
@@ -91,20 +90,39 @@ struct MoveGizmoOverlay: View {
             // Stem runs from just inside the head toward the pivot.
             let s0 = CGPoint(x: tip.x + ux * (head / 2 - 3), y: tip.y + uy * (head / 2 - 3))
             let s1 = CGPoint(x: tip.x + ux * (head / 2 + stem), y: tip.y + uy * (head / 2 + stem))
-            ZStack {
-                // Outline pass (behind, fatter).
-                stemPath(s0, s1).stroke(Self.outline,
-                    style: StrokeStyle(lineWidth: stemW + 4, lineCap: .round))
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(Self.outline).frame(width: head + 4, height: head + 4).position(tip)
-                // Fill pass (front).
-                stemPath(s0, s1).stroke(colored,
-                    style: StrokeStyle(lineWidth: stemW, lineCap: .round))
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(colored).frame(width: head, height: head).position(tip)
-            }
-            .accessibilityIdentifier("GizmoScale-\(part.axisName)")
+            let stemShape = stemPath(s0, s1).strokedPath(StrokeStyle(lineWidth: stemW, lineCap: .round))
+            let headShape = Path(roundedRect: CGRect(x: tip.x - head / 2, y: tip.y - head / 2,
+                                                     width: head, height: head),
+                                 cornerRadius: 5, style: .continuous)
+            Self.solidHandle(stemShape.union(headShape), lit: viewModel.litGizmoPart == part)
+                .accessibilityIdentifier("GizmoScale-\(part.axisName)")
         }
+    }
+
+    // MARK: - Solid handle look (Shapr3D: white, lit from above, thin outline)
+
+    /// One handle drawn as a single solid: a top-lit white gradient (blue
+    /// when lit), ONE even dark outline, and a soft drop shadow that lifts it
+    /// off the model. Every handle used to be an outline copy scaled up
+    /// behind the fill, which left uneven borders and dark seams where the
+    /// pieces overlapped; drawing the union once has neither.
+    static func solidHandle(_ path: Path, lit: Bool) -> some View {
+        let box = path.boundingRect.insetBy(dx: -2, dy: -2)
+        let local = path.offsetBy(dx: -box.minX, dy: -box.minY)
+        let colors: [Color] = lit
+            ? [Color(red: 0.50, green: 0.74, blue: 1.0), Color(red: 0.16, green: 0.46, blue: 0.96)]
+            : [Color(white: 1.0), Color(white: 0.93), Color(white: 0.76)]
+        return ZStack {
+            local.fill(LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom))
+            // A thin bright rim along the top edge reads as a bevel.
+            local.stroke(Color.white.opacity(lit ? 0.35 : 0.9), lineWidth: 0.75)
+                .mask(LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .center))
+            local.stroke(Color(white: 0.13), style: StrokeStyle(lineWidth: 1.4, lineJoin: .round))
+        }
+        .frame(width: box.width, height: box.height)
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.5), radius: 2.5, x: 0, y: 1.5)
+        .position(x: box.midX, y: box.midY)
     }
 
     private func stemPath(_ a: CGPoint, _ b: CGPoint) -> Path {
@@ -123,23 +141,36 @@ struct MoveGizmoOverlay: View {
             // Fade an axis that points nearly into/out of the screen (its arrow
             // would be a foreshortened smear); it is still draggable in 3D.
             if len > 6 {
-                let angle = atan2(Double(dy), Double(dx))
-                let colored = viewModel.litGizmoPart == part ? Self.highlight : Self.fill
-                ZStack {
-                    Image(systemName: "arrowshape.up.fill")
-                        .foregroundStyle(Self.outline).scaleEffect(1.22)
-                    Image(systemName: "arrowshape.up.fill")
-                        .foregroundStyle(colored)
-                }
-                .font(.system(size: 30, weight: .semibold))
-                .rotationEffect(.radians(angle + .pi / 2))
-                .position(tip)
-                .opacity(min(1, Double(len) / 24))
-                .accessibilityElement(children: .ignore)
-                .accessibilityIdentifier("GizmoAxis-\(part.axisName)")
-                .accessibilityValue(viewModel.litGizmoPart == part ? "lit" : "idle")
+                Self.solidHandle(Self.arrowPath(center: tip, direction: CGPoint(x: dx / len, y: dy / len)),
+                                 lit: viewModel.litGizmoPart == part)
+                    .opacity(min(1, Double(len) / 24))
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityIdentifier("GizmoAxis-\(part.axisName)")
+                    .accessibilityValue(viewModel.litGizmoPart == part ? "lit" : "idle")
             }
         }
+    }
+
+    /// A block arrow centred on `center`, pointing along the unit `direction`:
+    /// a broad head on a short shaft, corners rounded.
+    static func arrowPath(center: CGPoint, direction d: CGPoint) -> Path {
+        let headLength: CGFloat = 13, headHalf: CGFloat = 11.5
+        let shaftHalf: CGFloat = 4.5, shaftLength: CGFloat = 14
+        let total = headLength + shaftLength
+        let n = CGPoint(x: -d.y, y: d.x)
+        let tip = CGPoint(x: center.x + d.x * total / 2, y: center.y + d.y * total / 2)
+        func pt(_ along: CGFloat, _ across: CGFloat) -> CGPoint {
+            CGPoint(x: tip.x + d.x * along + n.x * across, y: tip.y + d.y * along + n.y * across)
+        }
+        var polygon = Path()
+        polygon.addLines([
+            pt(0, 0), pt(-headLength, headHalf), pt(-headLength, shaftHalf),
+            pt(-total, shaftHalf), pt(-total, -shaftHalf), pt(-headLength, -shaftHalf),
+            pt(-headLength, -headHalf),
+        ])
+        polygon.closeSubpath()
+        // Round every corner by the same small radius.
+        return polygon.union(polygon.strokedPath(StrokeStyle(lineWidth: 3, lineJoin: .round)))
     }
 
     // MARK: - Rotation handle (double-headed arrow on a curve)
@@ -150,51 +181,41 @@ struct MoveGizmoOverlay: View {
     private func rotationArc(_ part: GizmoPart, _ ctx: ProjectionContext) -> some View {
         let pts = GizmoScreenLayout.ringPolyline(part, project: ctx.project)
         if pts.count >= 3 {
-            let colored = viewModel.litGizmoPart == part ? Self.highlight : Self.fill
-            // Outline pass (fat, dark) then the fill pass, both with arrowheads
-            // at each end — the double-ended curved arrow. Thicker + shorter and
-            // pushed OUT past the move arrows (radius from GizmoScreenLayout) so
-            // it reads as its own control, clear of the move handles.
-            // One accessibility element for the whole handle (the passes are
-            // several paths) so the UI suite can read its lit state.
-            ZStack {
-                curvedArrow(pts, width: 13, arrow: 20, color: Self.outline)
-                curvedArrow(pts, width: 7, arrow: 16, color: colored)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityIdentifier("GizmoRing-\(part.axisName)")
-            .accessibilityValue(viewModel.litGizmoPart == part ? "lit" : "idle")
+            // A double-ended curved arrow, pushed OUT past the move arrows
+            // (radius from GizmoScreenLayout) so it reads as its own control.
+            // One shape — band plus both heads — so it has one outline.
+            // One accessibility element for the whole handle so the UI suite
+            // can read its lit state.
+            Self.solidHandle(Self.curvedArrowPath(pts), lit: viewModel.litGizmoPart == part)
+                .accessibilityElement(children: .ignore)
+                .accessibilityIdentifier("GizmoRing-\(part.axisName)")
+                .accessibilityValue(viewModel.litGizmoPart == part ? "lit" : "idle")
         }
     }
 
-    /// A polyline through `pts` with a triangular arrowhead at each end.
-    @ViewBuilder
-    private func curvedArrow(_ pts: [CGPoint], width: CGFloat,
-                             arrow: CGFloat, color: Color) -> some View {
-        Path { path in
-            path.addLines(pts)
-        }
-        .stroke(color, style: StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round))
-        arrowHead(tip: pts[0], from: pts[1], size: arrow, color: color)
-        arrowHead(tip: pts[pts.count - 1], from: pts[pts.count - 2], size: arrow, color: color)
-    }
-
-    @ViewBuilder
-    private func arrowHead(tip: CGPoint, from: CGPoint, size: CGFloat, color: Color) -> some View {
-        let dx = tip.x - from.x, dy = tip.y - from.y
-        let len = hypot(dx, dy)
-        if len > 0.5 {
+    /// A band along `pts` with a triangular arrowhead at each end, as one path.
+    static func curvedArrowPath(_ pts: [CGPoint]) -> Path {
+        let band = Path { $0.addLines(pts) }
+            .strokedPath(StrokeStyle(lineWidth: 6, lineCap: .butt, lineJoin: .round))
+        var shape = band
+        for (tip, from) in [(pts[0], pts[1]), (pts[pts.count - 1], pts[pts.count - 2])] {
+            let dx = tip.x - from.x, dy = tip.y - from.y
+            let len = hypot(dx, dy)
+            guard len > 0.5 else { continue }
             let ux = dx / len, uy = dy / len
             let nx = -uy, ny = ux
-            let base = CGPoint(x: tip.x - ux * size, y: tip.y - uy * size)
-            Path { path in
-                path.move(to: tip)
-                path.addLine(to: CGPoint(x: base.x + nx * size * 0.6, y: base.y + ny * size * 0.6))
-                path.addLine(to: CGPoint(x: base.x - nx * size * 0.6, y: base.y - ny * size * 0.6))
-                path.closeSubpath()
-            }
-            .fill(color)
+            let size: CGFloat = 13
+            // The head starts a little back along the band so they overlap.
+            let headTip = CGPoint(x: tip.x + ux * size * 0.55, y: tip.y + uy * size * 0.55)
+            let base = CGPoint(x: headTip.x - ux * size, y: headTip.y - uy * size)
+            var head = Path()
+            head.move(to: headTip)
+            head.addLine(to: CGPoint(x: base.x + nx * size * 0.62, y: base.y + ny * size * 0.62))
+            head.addLine(to: CGPoint(x: base.x - nx * size * 0.62, y: base.y - ny * size * 0.62))
+            head.closeSubpath()
+            shape = shape.union(head.union(head.strokedPath(StrokeStyle(lineWidth: 2, lineJoin: .round))))
         }
+        return shape
     }
 
     // MARK: - Plane-move handle (a tile lying IN its plane)
@@ -216,23 +237,17 @@ struct MoveGizmoOverlay: View {
 
     @ViewBuilder
     private func planeTile(_ part: GizmoPart, quad: [CGPoint], area: CGFloat) -> some View {
-        let colored = viewModel.litGizmoPart == part ? Self.highlight : Self.fill
         let path = Path { p in
             p.addLines(quad)
             p.closeSubpath()
         }
-        ZStack {
-            // Outline pass: the same quad stroked fat with round joins, which
-            // rounds the corners outward the way the flat arrows are rounded.
-            path.fill(Self.outline)
-            path.stroke(Self.outline, style: StrokeStyle(lineWidth: 6, lineJoin: .round))
-            path.fill(colored)
-            path.stroke(colored, style: StrokeStyle(lineWidth: 3, lineJoin: .round))
-        }
-        // Fade a tile as it tips toward edge-on, so it never reads as a crisp
-        // target while it is collapsing into a line.
-        .opacity(min(1, Double(area) / 90))
-        .accessibilityIdentifier("GizmoPlane-\(part.axisName)")
+        // Corners rounded outward the way the arrows are.
+        let rounded = path.union(path.strokedPath(StrokeStyle(lineWidth: 4, lineJoin: .round)))
+        Self.solidHandle(rounded, lit: viewModel.litGizmoPart == part)
+            // Fade a tile as it tips toward edge-on, so it never reads as a
+            // crisp target while it is collapsing into a line.
+            .opacity(min(1, Double(area) / 90))
+            .accessibilityIdentifier("GizmoPlane-\(part.axisName)")
     }
 
     // MARK: - Pivot (tap it to reposition the whole control)
@@ -242,10 +257,14 @@ struct MoveGizmoOverlay: View {
         if viewModel.gizmoRepositionArmed {
             crosshair(at: p)
         } else {
-            Circle().fill(Self.pivot)
-                .overlay(Circle().stroke(Self.outline, lineWidth: 1))
-                .frame(width: 11, height: 11)
-                .position(p)
+            ZStack {
+                Circle().fill(Color.white)
+                    .overlay(Circle().stroke(Color(white: 0.13), lineWidth: 1.2))
+                    .frame(width: 16, height: 16)
+                Circle().fill(Self.pivot).frame(width: 7, height: 7)
+            }
+            .shadow(color: .black.opacity(0.45), radius: 2, x: 0, y: 1)
+            .position(p)
         }
     }
 

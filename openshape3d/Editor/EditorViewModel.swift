@@ -23,6 +23,7 @@ enum ViewportEvent {
 /// Camera operations the view model can request from the viewport.
 @MainActor
 extension ViewportCameraControl {
+    func orientationCubeAxisLabels() -> [OrientationCube.FaceLabel] { [] }
     func rotateView(yawDegrees: Double, pitchDegrees: Double) {}
     func animateToNearestOrthoView() {}
     func setFieldOfView(degrees: Double) {}
@@ -68,6 +69,8 @@ protocol ViewportCameraControl: AnyObject {
     /// Standard-view names for the orientation-cube faces currently turned
     /// toward the camera, in screen points (spec §7.2).
     func orientationCubeLabels() -> [OrientationCube.FaceLabel]
+    /// The cube tripod's X / Y / Z letters, in screen points.
+    func orientationCubeAxisLabels() -> [OrientationCube.FaceLabel]
     /// World-units-per-gizmo-unit at `origin` (constant on-screen gizmo size).
     /// The 2D move/rotate overlay uses it to project gizmo-local part anchors.
     func gizmoWorldScale(at origin: SIMD3<Float>) -> Float
@@ -107,10 +110,15 @@ final class EditorViewModel {
     /// tap extends the selection.
     @ObservationIgnored
     var tapShiftHeld = false
-    /// The double-tap being handled came from a finger, not a mouse, trackpad
-    /// or Pencil (set by the viewport around one double-tap).
+    /// What made the tap or double-tap being handled (set by the viewport
+    /// around one tap): a finger, an Apple Pencil, or a mouse/trackpad.
     @ObservationIgnored
-    var doubleTapFromFinger = false
+    var tapInput: TapInputKind = .pointer
+    /// Compatibility for callers that only ask "was it a finger?".
+    var doubleTapFromFinger: Bool {
+        get { tapInput == .finger }
+        set { tapInput = newValue ? .finger : .pointer }
+    }
 
     weak var cameraControl: (any ViewportCameraControl)?
 
@@ -7294,6 +7302,19 @@ final class EditorViewModel {
         cameraControl?.moveCameraHeadOn(to: plane)
     }
 
+    /// A double-tap on the orientation cube: back to the home view, with the
+    /// grid on its default plane (Shapr3D). An open sketch ends, as any
+    /// named view that is not head-on to it does.
+    func resetToDefaultView() {
+        if case .sketching = mode, let plane = activeSketch?.plane,
+           !StandardView.isometric.isHeadOn(to: plane) {
+            finishSketch()
+        }
+        endPlaneView()
+        workPlane = nil
+        cameraControl?.animateToStandardView(.isometric)
+    }
+
     /// Views ▸ Reset View & Grid: the home view, with the grid back on the
     /// ground and no sketch plane defined.
     func resetViewAndGrid() {
@@ -8171,6 +8192,10 @@ final class EditorViewModel {
         }
         switch mode {
         case .idle, .editingPrimitive, .selected, .faceSelected:
+            // Shapr3D: one finger tap on the canvas does nothing — on a solid,
+            // on empty space, with or without a selection. The finger
+            // navigates (a double-tap sketches); the Pencil selects.
+            if fingerTapIgnored { return }
             selectFaceOrBody(ray: ray)
         case .extruding:
             // Tapping another fill adds its profile to the tool; anywhere
@@ -8232,6 +8257,12 @@ final class EditorViewModel {
         }
     }
 
+    /// A finger tap in a selecting mode that Settings ▸ Finger Taps Select
+    /// says to leave alone.
+    var fingerTapIgnored: Bool {
+        tapInput == .finger && !AppSettings.shared.fingerTapsSelect
+    }
+
     /// A finger double-tap starts a sketch (help article, "Touch and pen").
     /// A mouse or Pencil double-tap selects the whole body and, on a flat
     /// face, looks straight at it in a plane view; a construction plane gets
@@ -8291,11 +8322,19 @@ final class EditorViewModel {
             } else {
                 mode = .selected(hit.bodyID)
             }
-            // …and a flat face turns the camera head-on to it, from the side
-            // the user is looking at it from. A curved face only selects.
-            if let plane = worldFacePlane(bodyID: hit.bodyID, triangleIndex: hit.triangleIndex) {
+            // …and, with a mouse, a flat face turns the camera head-on to it,
+            // from the side the user is looking at it from. A curved face
+            // only selects. A Pencil double-tap only selects the body
+            // (Shapr3D): the Pencil picks, it doesn't move the view.
+            if tapInput != .pencil,
+               let plane = worldFacePlane(bodyID: hit.bodyID, triangleIndex: hit.triangleIndex) {
                 enterPlane(plane)
             }
+        } else if tapInput == .pencil {
+            // A Pencil double-tap on empty space clears, like its single tap.
+            cancelTool()
+            selection.removeAll()
+            mode = .idle
         } else {
             cameraControl?.fitScene()
         }
@@ -14114,9 +14153,20 @@ final class EditorViewModel {
         case .idle, .selected, .faceSelected, .editingPrimitive: break
         default: return false
         }
-        guard case .plane(let plane) = sketchTarget(under: ray, originTiles: false) else { return false }
-        sketch(on: plane, tool: nil)
-        return true
+        switch sketchTarget(under: ray, originTiles: false) {
+        case .plane(let plane):
+            sketch(on: plane, tool: nil)
+            return true
+        case .nothing:
+            // Empty space that misses the grid (looking up at the horizon):
+            // Shapr3D still snaps to the grid's plane and sketches there.
+            sketch(on: workPlane ?? gridPosition.plane, tool: nil)
+            return true
+        case .refused:
+            // A curved wall: nothing to sketch on. When the finger doesn't
+            // select either, the double-tap does nothing at all.
+            return !AppSettings.shared.fingerTapsSelect
+        }
     }
 
     /// Start a sketch on a plane pointed at directly, whatever was selected.

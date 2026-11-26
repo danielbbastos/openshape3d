@@ -20,6 +20,45 @@ design), `FREECAD_PLAYBOOK.md` (the FreeCAD-derived hardening ledger),
 `TOPO_NAMING_HISTORY_DESIGN.md` (element-naming design, now complete), and
 `AGENT_CONTROL.md` (the `/v1/exec` scripting surface).
 
+## Mission log — 2026-11-26, finger / Pencil / view cube parity with Shapr3D
+
+From a screen recording of Shapr3D on an iPad.
+
+- **Taps know what made them** (`TapInputKind`: finger, pencil, pointer;
+  `TapSequencer.Tap.byPencil`, `EditorViewModel.tapInput`). Settings ▸
+  Interface ▸ **Finger Taps Select** (`FingerTapSelection`, Automatic / On /
+  Off): Automatic turns finger selection off once an Apple Pencil has touched
+  the canvas (`AppSettings.applePencilSeen`, persisted), so finger-only iPads,
+  iPhones, the Mac and the UI suite (`.direct` touches, no Pencil) select as
+  before. With it off, a finger tap in idle / selected / face-selected does
+  nothing (`fingerTapIgnored`).
+- **Finger double-tap** sketches on the face, head-on, grid on the face (it
+  already did); on empty space it now always sketches on the grid's plane,
+  even when the ray misses the grid; on a curved wall it does nothing.
+- **Pencil double-tap** selects the whole body without turning the camera
+  (a mouse double-click still looks head-on); on empty space it clears.
+- **View cube**: chamfered dark cube (6 faces, 12 edge and 8 corner facets,
+  camera-fixed shading, `OrientationCubeRenderer.facetPolygons`), X/Y/Z
+  tripod from the (−,−,−) corner with coloured letters
+  (`OrientationCube.axisLabels`). A finger tap picks the nearest face
+  (`hitPose(facesOnly:)`); Pencil / pointer pick an edge (45°) or a corner.
+  Double-tap: `resetToDefaultView` (home view, grid back on the ground).
+  Moved 20 pt in from the edge (labels were clipped).
+- **Grid axes**: only the positive half of each in-plane axis is coloured;
+  the third axis stands out of a grid through the origin
+  (`Renderer.gridNormalAxis`, Y green on the ground).
+- **Field of View** is a dolly-zoom now (`TurntableCamera.setFieldOfView`):
+  the framing stays, the perspective changes.
+- **Move gizmo** handles are each ONE shape (`MoveGizmoOverlay.solidHandle`):
+  top-lit white gradient, one even outline, soft shadow. The old look
+  stacked a scaled-up outline copy behind the fill (uneven borders, seams).
+- Not changed: the world stays Y-up (Shapr3D is Z-up, so its "XY plane" is
+  our ground, which is still the default grid). `TouchParityTests` (9).
+  The simulator can't make Pencil touches, so the Pencil paths were checked
+  in tests only. UI suite not rerun.
+- Tests: no iOS 26.2 runtime on this Mac; run with
+  `IPHONEOS_DEPLOYMENT_TARGET=26.0` on a 26.0 simulator.
+
 ## Mission log — 2026-11-26, Move / Scale / Rotate Face keep the B-rep
 
 The last solid ops that dropped an analytic body to a mesh for good. Before

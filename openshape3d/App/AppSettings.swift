@@ -280,6 +280,32 @@ nonisolated enum SelectionExtension: String, CaseIterable, Codable, Sendable {
     func extends(shift: Bool) -> Bool { self == .click ? !shift : shift }
 }
 
+/// Settings ▸ Interface ▸ Finger Taps Select. Shapr3D splits the hands: the
+/// finger navigates (one tap on a solid does nothing, a double-tap sketches
+/// on the face) and the Pencil selects. Without a Pencil that would leave no
+/// way to select by touch, so Automatic turns finger selection off only once
+/// an Apple Pencil has touched the canvas.
+nonisolated enum FingerTapSelection: String, CaseIterable, Codable, Sendable {
+    case automatic, on, off
+
+    var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .on: "On"
+        case .off: "Off"
+        }
+    }
+
+    /// Whether a single finger tap selects, given whether a Pencil was seen.
+    func selects(pencilSeen: Bool) -> Bool {
+        switch self {
+        case .automatic: !pencilSeen
+        case .on: true
+        case .off: false
+        }
+    }
+}
+
 /// Settings ▸ General ▸ Start With: what the app shows at launch.
 nonisolated enum StartWith: String, CaseIterable, Codable, Sendable {
     case gallery, lastDesign, newDesign
@@ -377,6 +403,8 @@ final class AppSettings {
         static let showTouches = "os3d.tutorialShowTouches"
         static let showKeyPresses = "os3d.tutorialShowKeyPresses"
         static let selectionExtension = "os3d.selectionExtension"
+        static let fingerTapSelection = "os3d.fingerTapSelection"
+        static let applePencilSeen = "os3d.applePencilSeen"
         static let menuButtonLabels = "os3d.menuButtonLabels"
         static let startWith = "os3d.startWith"
         static let lastOpenedDesign = "os3d.lastOpenedDesign"
@@ -412,6 +440,17 @@ final class AppSettings {
     var selectionExtension: SelectionExtension {
         didSet { defaults.set(selectionExtension.rawValue, forKey: Key.selectionExtension) }
     }
+    /// Interface ▸ Finger Taps Select.
+    var fingerTapSelection: FingerTapSelection {
+        didSet { defaults.set(fingerTapSelection.rawValue, forKey: Key.fingerTapSelection) }
+    }
+    /// An Apple Pencil has touched the canvas on this device (ever), which
+    /// puts Automatic finger selection off.
+    var applePencilSeen: Bool {
+        didSet { if applePencilSeen != oldValue { defaults.set(applePencilSeen, forKey: Key.applePencilSeen) } }
+    }
+    /// Whether a single finger tap selects right now.
+    var fingerTapsSelect: Bool { fingerTapSelection.selects(pencilSeen: applePencilSeen) }
     /// Interface ▸ Menu Button Labels: names under the toolbar's icons.
     var menuButtonLabels: Bool {
         didSet { defaults.set(menuButtonLabels, forKey: Key.menuButtonLabels) }
@@ -620,6 +659,9 @@ final class AppSettings {
             .flatMap(AnchoredSketchEntity.init) ?? .firstSelected
         selectionExtension = defaults.string(forKey: Key.selectionExtension)
             .flatMap(SelectionExtension.init) ?? .shiftClick
+        fingerTapSelection = defaults.string(forKey: Key.fingerTapSelection)
+            .flatMap(FingerTapSelection.init) ?? .automatic
+        applePencilSeen = defaults.bool(forKey: Key.applePencilSeen)
         menuButtonLabels = Self.storedBool(defaults, Key.menuButtonLabels) ?? false
         startWith = defaults.string(forKey: Key.startWith).flatMap(StartWith.init) ?? .gallery
         lastOpenedDesign = defaults.object(forKey: Key.lastOpenedDesign) as? Date

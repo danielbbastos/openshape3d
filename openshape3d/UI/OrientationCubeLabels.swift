@@ -16,15 +16,31 @@ import SwiftUI
 struct OrientationCubeLabels: View {
     @Bindable var viewModel: EditorViewModel
 
+    static func axisColor(_ name: String) -> Color {
+        switch name {
+        case "X": Color(red: 0.92, green: 0.36, blue: 0.36)
+        case "Y": Color(red: 0.36, green: 0.78, blue: 0.40)
+        default: Color(red: 0.35, green: 0.55, blue: 0.98)
+        }
+    }
+
     var body: some View {
         // Re-project as the camera turns.
         let _ = viewModel.cameraEpoch
         ZStack(alignment: .topLeading) {
             ForEach(viewModel.cameraControl?.orientationCubeLabels() ?? []) { label in
                 Text(label.name)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.black.opacity(0.75))
-                    .shadow(color: .white.opacity(0.6), radius: 0.5)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .shadow(color: .black.opacity(0.5), radius: 0.5)
+                    .opacity(label.opacity)
+                    .position(label.point)
+            }
+            // The tripod's letters, in the axis colours.
+            ForEach(viewModel.cameraControl?.orientationCubeAxisLabels() ?? []) { label in
+                Text(label.name)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Self.axisColor(label.name))
                     .opacity(label.opacity)
                     .position(label.point)
             }

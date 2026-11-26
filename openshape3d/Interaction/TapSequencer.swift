@@ -20,6 +20,8 @@ nonisolated struct TapSequencer {
         var time: TimeInterval
         var byFinger: Bool
         var shift: Bool
+        /// An Apple Pencil, not a finger or a pointer.
+        var byPencil: Bool = false
     }
 
     enum Event: Equatable {
@@ -46,6 +48,7 @@ nonisolated struct TapSequencer {
                 pending = nil
                 var both = first
                 both.byFinger = first.byFinger && tap.byFinger
+                both.byPencil = first.byPencil && tap.byPencil
                 return [.double(both)]
             }
             pending = tap

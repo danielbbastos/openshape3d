@@ -115,6 +115,20 @@ nonisolated struct TurntableCamera: Sendable, Equatable {
         projectionMatrix(aspect: aspect, centerOffset: centerOffset) * viewMatrix
     }
 
+    /// View ▸ Field of View: a perspective angle, or orthographic below 1°.
+    /// The camera dollies so the target's plane keeps its size on screen —
+    /// a wider angle comes closer and shows more perspective, a narrower one
+    /// backs off and flattens — instead of the angle alone acting as a zoom.
+    mutating func setFieldOfView(degrees: Double) {
+        let viewHeight = distance * tan(fovY * 0.5)
+        projection = degrees < 1
+            ? .orthographic
+            : .perspective(fovY: Float(degrees * .pi / 180))
+        let half = tan(fovY * 0.5)
+        guard half > 1e-4, viewHeight > 0 else { return }
+        distance = min(max(viewHeight / half, 1e-3), Self.maxZoomDistance)
+    }
+
     // MARK: - Navigation
 
     mutating func orbit(deltaPixels: CGSize, viewportSize: CGSize) {

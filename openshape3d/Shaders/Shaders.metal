@@ -564,6 +564,14 @@ static float gridLine(float2 p, float spacing, float2 fw) {
     return 1.0 - saturate(min(grid.x, grid.y));
 }
 
+// Whether local coordinate `coord` along a grid axis lies on the world
+// axis's positive side (by the axis's dominant world component).
+static bool gridPositiveHalf(float coord, float3 axisDir) {
+    float3 a = abs(axisDir);
+    float d = (a.x >= a.y && a.x >= a.z) ? axisDir.x : ((a.y >= a.z) ? axisDir.y : axisDir.z);
+    return coord * d >= 0.0;
+}
+
 fragment float4 fragment_grid(
     GridOut in [[stage_in]],
     constant FrameUniforms &frame [[buffer(BufferIndexFrameUniforms)]]
@@ -590,19 +598,31 @@ fragment float4 fragment_grid(
     float3 color = lineColor;
     float alpha = strength;
 
+    // Only the POSITIVE half of each axis is coloured (Shapr3D); the
+    // negative half is a plain, slightly stronger grid line. "Positive" is
+    // the world direction: a grid axis that runs along −Z colours its
+    // negative local half.
     if (onXAxis > 0.0) {
         float3 axis = abs(frame.gridXAxis.xyz);
-        color = axis.x * float3(0.85, 0.30, 0.30)
-              + axis.y * float3(0.30, 0.70, 0.35)
-              + axis.z * float3(0.25, 0.45, 0.90);
-        alpha = max(alpha, onXAxis * 0.9);
+        if (gridPositiveHalf(p.x, frame.gridXAxis.xyz)) {
+            color = axis.x * float3(0.85, 0.30, 0.30)
+                  + axis.y * float3(0.30, 0.70, 0.35)
+                  + axis.z * float3(0.25, 0.45, 0.90);
+            alpha = max(alpha, onXAxis * 0.9);
+        } else {
+            alpha = max(alpha, onXAxis * 0.55);
+        }
     }
     if (onZAxis > 0.0) {
         float3 axis = abs(frame.gridYAxis.xyz);
-        color = axis.x * float3(0.85, 0.30, 0.30)
-              + axis.y * float3(0.30, 0.70, 0.35)
-              + axis.z * float3(0.25, 0.45, 0.90);
-        alpha = max(alpha, onZAxis * 0.9);
+        if (gridPositiveHalf(p.y, frame.gridYAxis.xyz)) {
+            color = axis.x * float3(0.85, 0.30, 0.30)
+                  + axis.y * float3(0.30, 0.70, 0.35)
+                  + axis.z * float3(0.25, 0.45, 0.90);
+            alpha = max(alpha, onZAxis * 0.9);
+        } else {
+            alpha = max(alpha, onZAxis * 0.55);
+        }
     }
 
     // Fade with distance from the grid center and at grazing angles.
