@@ -993,6 +993,99 @@ nonisolated enum OCCTKernel {
             .map(\.handle)
     }
 
+    /// How a face deform moves the picked face — the B-rep side of
+    /// `KernelOps.moveFace` / `scaleFace` / `rotateFace`. Every case is a
+    /// similarity, so the face's own curves (holes, arcs) carry over exactly.
+    enum FaceDeform {
+        /// Translate the face by `delta` (body-local).
+        case move(SIMD3<Double>)
+        /// Scale the face about its centroid by `factor`.
+        case scale(Double)
+        /// Rotate the face about the line through its centroid along `axis`
+        /// by `angle` radians. Only a TILT (axis in the face's plane, give or
+        /// take) stays exact; a twist about the normal makes ruled walls and
+        /// is refused here, which leaves it to the mesh path.
+        case rotate(angle: Double, axis: SIMD3<Double>)
+    }
+
+    /// Move, scale or tilt one planar face of an analytic body and stay
+    /// analytic: the face's corners move (picked with the mesh path's own
+    /// `KernelOps.faceContains`, so the preview and the commit agree) and the
+    /// walls that meet it are rebuilt on their new planes. `face` is
+    /// body-local, like `pushPullResult`'s. Fails — and the caller falls back
+    /// to the mesh deform, as every face deform did before — when a wall
+    /// would have to bend (a twist, a curved wall, a non-prismatic wall), or
+    /// the result does not validate.
+    static func faceDeformResult(_ handle: BRepHandle, face: PlanarFace,
+                                 deform: FaceDeform) -> Result<BRepHandle, OCCTOpError> {
+        let normal = simd_normalize(SIMD3<Double>(
+            Double(face.normal.x), Double(face.normal.y), Double(face.normal.z)))
+        let center = KernelOps.faceCentroidPoint(face)
+        // Rows of the 3 × 3 linear part, and the translation.
+        var rows = [SIMD3<Double>(1, 0, 0), SIMD3<Double>(0, 1, 0), SIMD3<Double>(0, 0, 1)]
+        var translation = SIMD3<Double>.zero
+        switch deform {
+        case let .move(delta):
+            guard simd_length(delta) > 1e-9 else {
+                return .failure(.kernelRefused("nothing to move"))
+            }
+            translation = delta
+        case let .scale(factor):
+            guard factor > 1e-6, abs(factor - 1) > 1e-9 else {
+                return .failure(.kernelRefused("nothing to scale"))
+            }
+            rows = rows.map { $0 * factor }
+            translation = center * (1 - factor)
+        case let .rotate(angle, axis):
+            guard abs(angle) > 1e-9, simd_length(axis) > 1e-9 else {
+                return .failure(.kernelRefused("nothing to rotate"))
+            }
+            let a = simd_normalize(axis)
+            guard abs(simd_dot(a, normal)) <= 0.98 else {
+                return .failure(.kernelRefused("a twist bends the walls — mesh path"))
+            }
+            let r = simd_double3x3(simd_quatd(angle: angle, axis: a))
+            // simd matrices are column-major: row i is (c0[i], c1[i], c2[i]).
+            rows = (0..<3).map { SIMD3(r.columns.0[$0], r.columns.1[$0], r.columns.2[$0]) }
+            let rc = SIMD3(simd_dot(rows[0], center), simd_dot(rows[1], center),
+                           simd_dot(rows[2], center))
+            translation = center - rc
+        }
+        let matrix: [Double] = [
+            rows[0].x, rows[0].y, rows[0].z, translation.x,
+            rows[1].x, rows[1].y, rows[1].z, translation.y,
+            rows[2].x, rows[2].y, rows[2].z, translation.z,
+        ]
+
+        let positions = OCCTBridge.vertexPositions(of: handle.shape)
+        let onFace = KernelOps.faceContains(face)
+        var moving = [Int]()
+        positions.withUnsafeBytes { raw in
+            let xyz = raw.bindMemory(to: Double.self)
+            for i in 0..<(xyz.count / 3)
+            where onFace(SIMD3(xyz[3 * i], xyz[3 * i + 1], xyz[3 * i + 2])) {
+                moving.append(i)
+            }
+        }
+        guard !moving.isEmpty else {
+            return .failure(.noTargetMatched("no kernel vertex lies on the face"))
+        }
+        let tolerance = matchTolerance(for: handle)
+        let status = OCCTOpStatus()
+        guard let shape = OCCTBridge.shape(
+            byTransformingVertices: handle.shape, vertexIndices: packIndices(moving),
+            matrix: matrix.withUnsafeBytes { Data($0) },
+            tolerance: tolerance, status: status) else {
+            let error = OCCTOpError(status)
+            KernelCapture.recordFailure(
+                op: "faceDeform", inputs: [("shape", handle)],
+                params: ["matrix": matrix, "tolerance": tolerance, "vertices": moving],
+                error: error)
+            return .failure(error)
+        }
+        return .success(BRepHandle(shape))
+    }
+
     /// Imprint Edge (spec §4.17): split the faces of `handle` along
     /// `segments`, plane-local to `plane` — both already in the body's own
     /// frame (`ImprintKit.bodyLocal`). Fails with `noTargetMatched` when no

@@ -1189,6 +1189,28 @@ nonisolated extension FeatureGraph {
 
     // MARK: Move face
 
+    /// The exact Move / Scale / Rotate Face of an analytic body — the same
+    /// kernel call the live commit makes (`EditorViewModel`), so a replay
+    /// lands where the drag did. Nil for a brep-less body or any kernel
+    /// refusal (a twist, a curved wall), and the caller keeps the mesh
+    /// deform: before this every face deform dropped the body to a mesh for
+    /// good, and fillets, STEP export and `/v1/check` after it lost the
+    /// exact geometry (the push/pull of bug report a6fea315 had the same
+    /// flaw).
+    private func analyticFaceDeform(
+        _ body: Body, face: FaceTopology.PlanarFace, deform: OCCTKernel.FaceDeform,
+        next nextRevision: () -> UInt64
+    ) -> Body? {
+        guard OCCTKernel.useOCCTAsSourceOfTruth, let brep = body.brep,
+              case let .success(handle) = OCCTKernel.faceDeformResult(
+                  brep, face: face, deform: deform)
+        else { return nil }
+        var analytic = Body(
+            id: body.id, name: body.name, transform: body.transform, primitive: nil,
+            euclidMesh: body.euclidMesh(), revision: nextRevision())
+        return analytic.adoptBRep(handle) ? analytic : nil
+    }
+
     /// Replay a face move: re-resolve the persisted `FaceRef` against the
     /// rebuilt body (topological naming), reconstruct the world/local delta from
     /// the stored face-basis components, and deform via `KernelOps.moveFace`.
@@ -1218,15 +1240,18 @@ nonisolated extension FeatureGraph {
             Double(planar.normal.x), Double(planar.normal.y), Double(planar.normal.z)))
         let localDelta = bx * components.x + by * components.y + n * components.z
 
-        let mesh = KernelOps.moveFace(
-            mesh: body.euclidMesh(), face: planar, delta: localDelta)
-        guard !mesh.polygons.isEmpty else {
+        guard let result = analyticFaceDeform(body, face: planar, deform: .move(localDelta),
+                                              next: nextRevision) ?? {
+            let mesh = KernelOps.moveFace(
+                mesh: body.euclidMesh(), face: planar, delta: localDelta)
+            guard !mesh.polygons.isEmpty else { return nil }
+            return Body(
+                id: body.id, name: body.name, transform: body.transform, primitive: nil,
+                euclidMesh: mesh, revision: nextRevision())
+        }() else {
             state.errors[node.id] = .emptyGeometry
             return
         }
-        let result = Body(
-            id: body.id, name: body.name, transform: body.transform, primitive: nil,
-            euclidMesh: mesh, revision: nextRevision())
         let newTable: FaceTable
         if let table {
             newTable = state.naming.propagate(inputs: [table], output: result, op: .pushPull)
@@ -1259,15 +1284,18 @@ nonisolated extension FeatureGraph {
             return
         }
         proposeUpgrade(node, ref: face, resolved: resolved, into: &state)
-        let mesh = KernelOps.scaleFace(
-            mesh: body.euclidMesh(), face: planar, factor: factor)
-        guard !mesh.polygons.isEmpty else {
+        guard let result = analyticFaceDeform(body, face: planar, deform: .scale(factor),
+                                              next: nextRevision) ?? {
+            let mesh = KernelOps.scaleFace(
+                mesh: body.euclidMesh(), face: planar, factor: factor)
+            guard !mesh.polygons.isEmpty else { return nil }
+            return Body(
+                id: body.id, name: body.name, transform: body.transform, primitive: nil,
+                euclidMesh: mesh, revision: nextRevision())
+        }() else {
             state.errors[node.id] = .emptyGeometry
             return
         }
-        let result = Body(
-            id: body.id, name: body.name, transform: body.transform, primitive: nil,
-            euclidMesh: mesh, revision: nextRevision())
         let newTable: FaceTable
         if let table {
             newTable = state.naming.propagate(inputs: [table], output: result, op: .pushPull)
@@ -1309,15 +1337,19 @@ nonisolated extension FeatureGraph {
             Double(planar.normal.x), Double(planar.normal.y), Double(planar.normal.z)))
         let axis = bx * components.x + by * components.y + n * components.z
 
-        let mesh = KernelOps.rotateFace(
-            mesh: body.euclidMesh(), face: planar, angle: angle, axis: axis)
-        guard !mesh.polygons.isEmpty else {
+        guard let result = analyticFaceDeform(
+                  body, face: planar, deform: .rotate(angle: angle, axis: axis),
+                  next: nextRevision) ?? {
+            let mesh = KernelOps.rotateFace(
+                mesh: body.euclidMesh(), face: planar, angle: angle, axis: axis)
+            guard !mesh.polygons.isEmpty else { return nil }
+            return Body(
+                id: body.id, name: body.name, transform: body.transform, primitive: nil,
+                euclidMesh: mesh, revision: nextRevision())
+        }() else {
             state.errors[node.id] = .emptyGeometry
             return
         }
-        let result = Body(
-            id: body.id, name: body.name, transform: body.transform, primitive: nil,
-            euclidMesh: mesh, revision: nextRevision())
         let newTable: FaceTable
         if let table {
             newTable = state.naming.propagate(inputs: [table], output: result, op: .pushPull)

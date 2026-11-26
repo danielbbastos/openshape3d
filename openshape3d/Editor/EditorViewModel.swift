@@ -2626,18 +2626,23 @@ final class EditorViewModel {
         faceMoveSession = nil
         faceMoveLastDelta = .zero
 
+        // The body as it was, B-rep and transform included — undo must give
+        // back the exact solid, not a mesh rebuilt from it.
+        let before = s.source
         var beforeTransform = Transform3D.identity
         beforeTransform.translation = s.pivot
-        let before = Body(
-            id: s.bodyID, name: session.document.body(with: s.bodyID)?.name ?? "Body",
-            transform: beforeTransform, primitive: nil,
-            euclidMesh: s.sourceLocalMesh, revision: 0
-        )
 
         // Negligible drag (a tap, or a wobble): restore the source and do
-        // nothing undoable.
+        // nothing undoable. An analytic body stays analytic; the mesh deform
+        // is the fallback (and the only path for brep-less bodies).
+        let world = SIMD3<Double>(Double(worldDelta.x), Double(worldDelta.y), Double(worldDelta.z))
         guard simd_length(worldDelta) > 1e-4,
-              let moved = faceMovedLocalMesh(s, worldDelta: worldDelta) else {
+              let after = analyticFaceDeform(
+                  s.source, context: s.context, deform: .move(bodyLocalVector(world, of: s.source)))
+                  ?? faceMovedLocalMesh(s, worldDelta: worldDelta).map({
+                      Body(id: s.bodyID, name: before.name, transform: beforeTransform,
+                           primitive: nil, euclidMesh: $0, revision: 0)
+                  }) else {
             session.preview { document in
                 if let index = document.bodyIndex(of: s.bodyID) {
                     document.bodies[index] = before.keepingAppearance(of: document.bodies[index])
@@ -2646,10 +2651,6 @@ final class EditorViewModel {
             return
         }
 
-        let after = Body(
-            id: s.bodyID, name: before.name, transform: beforeTransform,
-            primitive: nil, euclidMesh: moved, revision: 0
-        )
         let replace = ReplaceBodyCommand(title: "Move Face", before: before, after: after)
 
         if let node = moveFaceFeatureNode(session: s, worldDelta: worldDelta) {
@@ -2831,15 +2832,16 @@ final class EditorViewModel {
         faceScaleSession = nil
         faceScaleLastFactor = 1
 
+        let before = s.source   // exact, for undo — see commitFaceMove
         var beforeTransform = Transform3D.identity
         beforeTransform.translation = s.pivot
-        let before = Body(
-            id: s.bodyID, name: session.document.body(with: s.bodyID)?.name ?? "Body",
-            transform: beforeTransform, primitive: nil,
-            euclidMesh: s.sourceLocalMesh, revision: 0)
 
         guard abs(factor - 1) > 1e-4,
-              let scaled = faceScaledLocalMesh(s, factor: factor) else {
+              let after = analyticFaceDeform(s.source, context: s.context, deform: .scale(factor))
+                  ?? faceScaledLocalMesh(s, factor: factor).map({
+                      Body(id: s.bodyID, name: before.name, transform: beforeTransform,
+                           primitive: nil, euclidMesh: $0, revision: 0)
+                  }) else {
             session.preview { document in
                 if let index = document.bodyIndex(of: s.bodyID) {
                     document.bodies[index] = before.keepingAppearance(of: document.bodies[index])
@@ -2848,9 +2850,6 @@ final class EditorViewModel {
             return
         }
 
-        let after = Body(
-            id: s.bodyID, name: before.name, transform: beforeTransform,
-            primitive: nil, euclidMesh: scaled, revision: 0)
         let replace = ReplaceBodyCommand(title: "Scale Face", before: before, after: after)
 
         if let node = scaleFaceFeatureNode(session: s, factor: factor) {
@@ -2982,15 +2981,18 @@ final class EditorViewModel {
         faceRotateSession = nil
         faceRotateLastAngle = 0
 
+        let before = s.source   // exact, for undo — see commitFaceMove
         var beforeTransform = Transform3D.identity
         beforeTransform.translation = s.pivot
-        let before = Body(
-            id: s.bodyID, name: session.document.body(with: s.bodyID)?.name ?? "Body",
-            transform: beforeTransform, primitive: nil,
-            euclidMesh: s.sourceLocalMesh, revision: 0)
 
         guard abs(angle) > 1e-4,
-              let rotated = faceRotatedLocalMesh(s, angle: angle, axis: axis) else {
+              let after = analyticFaceDeform(
+                  s.source, context: s.context,
+                  deform: .rotate(angle: angle, axis: bodyLocalVector(axis, of: s.source)))
+                  ?? faceRotatedLocalMesh(s, angle: angle, axis: axis).map({
+                      Body(id: s.bodyID, name: before.name, transform: beforeTransform,
+                           primitive: nil, euclidMesh: $0, revision: 0)
+                  }) else {
             session.preview { document in
                 if let index = document.bodyIndex(of: s.bodyID) {
                     document.bodies[index] = before.keepingAppearance(of: document.bodies[index])
@@ -2999,9 +3001,6 @@ final class EditorViewModel {
             return
         }
 
-        let after = Body(
-            id: s.bodyID, name: before.name, transform: beforeTransform,
-            primitive: nil, euclidMesh: rotated, revision: 0)
         let replace = ReplaceBodyCommand(title: "Rotate Face", before: before, after: after)
 
         if let node = rotateFaceFeatureNode(session: s, angle: angle, axis: axis) {
@@ -10096,6 +10095,30 @@ final class EditorViewModel {
         var body = Body(id: source.id, name: source.name, transform: source.transform,
                         primitive: nil, euclidMesh: source.euclidMesh(), revision: 0)
         return body.adoptBRep(handle) ? body : nil
+    }
+
+    /// The committed Move / Scale / Rotate Face of an analytic body, kept
+    /// analytic — the same kernel call history replay makes
+    /// (`FeatureGraph.analyticFaceDeform`), in body-local space so the
+    /// transform is untouched. Nil (mesh fallback) for cylinder faces,
+    /// brep-less bodies and any kernel refusal (a twist, a curved wall).
+    private func analyticFaceDeform(_ source: Body, context: ToolContext,
+                                    deform: OCCTKernel.FaceDeform) -> Body? {
+        guard OCCTKernel.useOCCTAsSourceOfTruth, context.cylinderFace == nil,
+              let brep = source.brep, let seed = context.faceTriangles.first,
+              let face = FaceTopology.planarFace(in: source.render, seedTriangle: seed),
+              case let .success(handle) = OCCTKernel.faceDeformResult(
+                  brep, face: face, deform: deform)
+        else { return nil }
+        var body = Body(id: source.id, name: source.name, transform: source.transform,
+                        primitive: nil, euclidMesh: source.euclidMesh(), revision: 0)
+        return body.adoptBRep(handle) ? body : nil
+    }
+
+    /// A world-space direction or displacement in `body`'s own frame
+    /// (rotation undone, scale divided out).
+    private func bodyLocalVector(_ world: SIMD3<Double>, of body: Body) -> SIMD3<Double> {
+        body.transform.rotation.inverse.act(world) / max(body.transform.scale, 1e-9)
     }
 
     /// Commit a face push/pull: replace the source body with its truncated or
