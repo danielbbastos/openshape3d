@@ -186,7 +186,9 @@ struct MoveGizmoOverlay: View {
 
     /// The slab a square or arrow is drawn as, nil for anything else.
     static func slab(_ part: GizmoPart, eye: SIMD3<Float>) -> GizmoSlab? {
-        part.isPlane ? GizmoSlab.square(part) : GizmoSlab.arrow(part, eye: eye)
+        if part.isPlane { return GizmoSlab.square(part) }
+        if part.isRing { return GizmoSlab.arc(part) }
+        return GizmoSlab.arrow(part, eye: eye)
     }
 
     /// The faces of a part's slab that turn toward the eye, projected, in
@@ -197,6 +199,8 @@ struct MoveGizmoOverlay: View {
         if part.isPlane {
             guard GizmoScreenLayout.visiblePlaneQuads(project: project).contains(where: { $0.part == part })
             else { return nil }
+        } else if part.isRing {
+            guard GizmoScreenLayout.ringPolyline(part, project: project).count >= 3 else { return nil }
         } else {
             guard let tip = GizmoScreenLayout.axisAnchor(part, project: project),
                   let base = project(part.axisDirection * (GizmoScreenLayout.armLocal * 0.35)),
@@ -335,14 +339,15 @@ struct MoveGizmoOverlay: View {
     /// basis, ~66° wide) so the drawn curve follows its on-screen ellipse.
     @ViewBuilder
     private func rotationArc(_ part: GizmoPart, _ ctx: ProjectionContext) -> some View {
-        if let shape = Self.handleShape(part, project: ctx.project, scale: false),
+        // A double-ended curved arrow, a thin solid lying in its ring's plane
+        // like the squares and arrows. One accessibility element for the
+        // whole handle so the UI suite can read its lit state.
+        if let eye = ctx.eye,
+           let faces = Self.slabFaces(part, project: ctx.project, eye: eye),
+           let shape = Self.handleShape(part, project: ctx.project, scale: false, eye: eye),
            let center = ctx.project(.zero), !Self.pivotCovers(shape, center: center) {
-            // A double-ended curved arrow, pushed OUT past the move arrows
-            // (radius from GizmoScreenLayout) so it reads as its own control.
-            // One shape — band plus both heads — so it has one outline.
-            // One accessibility element for the whole handle so the UI suite
-            // can read its lit state.
-            Self.solidHandle(shape, lit: viewModel.litGizmoPart == part)
+            Self.slabView(faces, lit: viewModel.litGizmoPart == part, eye: eye,
+                          up: ctx.basis.local(SIMD3(0, 1, 0)))
                 .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("GizmoRing-\(part.axisName)")
                 .accessibilityValue(viewModel.litGizmoPart == part ? "lit" : "idle")

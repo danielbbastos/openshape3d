@@ -87,9 +87,9 @@ nonisolated struct GizmoSlab: Equatable {
     static let arrowHeadHalf: Float = 0.12
     static let arrowShaftHalf: Float = 0.047
 
-    /// A move arrow centred on its arm's end, lying on whichever of the two
-    /// cube faces holding its axis turns more toward the eye — so it always
-    /// reads as a shape, never a sliver.
+    /// A move arrow centred on its arm's end, lying on the cube face that
+    /// turns toward the eye — turning smoothly about its own axis from one
+    /// face to the other as the view orbits (see `arrowPlaneNormal`).
     static func arrow(_ part: GizmoPart, eye: SIMD3<Float>, thickness: Float = defaultThickness) -> GizmoSlab? {
         guard !part.isPlane, !part.isRing else { return nil }
         let a = part.axisDirection
@@ -106,13 +106,57 @@ nonisolated struct GizmoSlab: Equatable {
         return GizmoSlab(outline: rounded(corners, radius: 0.018, normal: normal), normal: normal, thickness: thickness)
     }
 
-    /// Of the two gizmo axes square to `axis`, the one (as a plane normal)
-    /// most in line with the eye.
+    /// Half the turn, radians, over which an arrow eases from one face to
+    /// the other, centred on the 45° view where the old rule snapped.
+    static let arrowTurnHalfWindow: Float = 25 * .pi / 180
+
+    /// The plane an arrow lies in, as its normal. The arrow turns about its
+    /// own `axis`. While one of the two cube faces holding that axis is
+    /// clearly the one facing the eye, the arrow lies flat on it. Through a
+    /// window around 45°, where the faces hand over, it turns smoothly from
+    /// one to the other instead of snapping 90°.
     static func arrowPlaneNormal(axis: SIMD3<Float>, eyeDirection: SIMD3<Float>) -> SIMD3<Float> {
-        let candidates = [SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0), SIMD3<Float>(0, 0, 1)]
+        let others = [SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0), SIMD3<Float>(0, 0, 1)]
             .filter { abs(simd_dot($0, axis)) < 0.5 }
-        let eye = simd_length_squared(eyeDirection) > 0 ? simd_normalize(eyeDirection) : SIMD3<Float>(0, 0, 1)
-        return candidates.max { abs(simd_dot($0, eye)) < abs(simd_dot($1, eye)) } ?? SIMD3<Float>(0, 0, 1)
+        guard others.count == 2 else { return SIMD3(0, 0, 1) }
+        let p = others[0], q = others[1]
+        let ex = simd_dot(eyeDirection, p), ey = simd_dot(eyeDirection, q)
+        // The eye's angle round the axis, folded into the quadrant between
+        // the two faces: 0 = square to face `p`, π/2 = square to face `q`.
+        let theta = atan2(abs(ey), abs(ex))
+        let lo = Float.pi / 4 - arrowTurnHalfWindow, hi = Float.pi / 4 + arrowTurnHalfWindow
+        let t = min(max((theta - lo) / (hi - lo), 0), 1)
+        let phi = Float.pi / 2 * (t * t * (3 - 2 * t))
+        let sx: Float = ex < 0 ? -1 : 1, sy: Float = ey < 0 ? -1 : 1
+        return simd_normalize(p * (sx * cos(phi)) + q * (sy * sin(phi)))
+    }
+
+    /// Curved-arrow sizes, gizmo units: band and head half-widths, and how
+    /// far each head reaches past the end of the 30° arc.
+    static let arcBandHalf: Float = 0.032
+    static let arcHeadHalf: Float = 0.078
+    static let arcHeadLength: Float = 0.1
+
+    /// A rotation handle: the 30° arc `GizmoScreenLayout.ringPolyline` draws,
+    /// as a band with an arrowhead at each end, lying in its ring's plane.
+    static func arc(_ part: GizmoPart, thickness: Float = defaultThickness) -> GizmoSlab? {
+        guard part.isRing else { return nil }
+        let (u, v) = GizmoGeometry.ringBasis(for: part)
+        let r = GizmoScreenLayout.ringLocal
+        let a0 = Float.pi / 4 - 15 * .pi / 180
+        let a1 = Float.pi / 4 + 15 * .pi / 180
+        let reach = arcHeadLength / r
+        func at(_ angle: Float, _ radius: Float) -> SIMD3<Float> { (u * cos(angle) + v * sin(angle)) * radius }
+        let steps = 12
+        var outline: [SIMD3<Float>] = []
+        for i in 0...steps { outline.append(at(a0 + (a1 - a0) * Float(i) / Float(steps), r + arcBandHalf)) }
+        outline += [at(a1, r + arcHeadHalf), at(a1 + reach, r), at(a1, r - arcHeadHalf)]
+        for i in stride(from: steps, through: 0, by: -1) {
+            outline.append(at(a0 + (a1 - a0) * Float(i) / Float(steps), r - arcBandHalf))
+        }
+        outline += [at(a0, r - arcHeadHalf), at(a0 - reach, r), at(a0, r + arcHeadHalf)]
+        let normal = simd_normalize(simd_cross(u, v))
+        return GizmoSlab(outline: rounded(outline, radius: 0.008, normal: normal), normal: normal, thickness: thickness)
     }
 
     /// Two in-plane axes for a gizmo plane normal, in the plane's own order
