@@ -290,6 +290,15 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         }
     }
 
+    /// The camera's eye in gizmo-local units (see `GizmoSlab`).
+    private func gizmoEyeLocal() -> SIMD3<Float>? {
+        guard let renderer, let origin = viewModel.gizmoOrigin else { return nil }
+        let eye = renderer.camera.position
+        return MoveGizmoOverlay.eyeLocal(
+            SIMD3(Double(eye.x), Double(eye.y), Double(eye.z)), origin: origin,
+            scale: renderer.gizmoScale(origin: origin), basis: viewModel.gizmoBasis)
+    }
+
     /// The gizmo handle under a screen tap — hit-tested against the SAME 2D
     /// anchors the overlay draws, so the flat handle a user sees is the target
     /// they grab (the old 3D-mesh capsule test no longer matched the visual).
@@ -306,7 +315,7 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         var part = GizmoScreenLayout.hitTest(at: point, project: project)
         // A handle the centre dot covers is hidden, so it can't be grabbed.
         if let hidden = part, MoveGizmoOverlay.isHiddenByPivot(
-            hidden, project: project, scale: viewModel.gizmoIsScale) {
+            hidden, project: project, scale: viewModel.gizmoIsScale, eye: gizmoEyeLocal()) {
             part = nil
         }
         // A face translates, it doesn't rotate — ignore ring hits there so a
