@@ -299,9 +299,16 @@ final class ViewportCoordinator: NSObject, ViewportGestureDelegate, ViewportCame
         // (invisible) axis/plane target near the centre can't win and suppress
         // the ring grab (which would drop the drag to a camera orbit).
         if viewModel.faceRotateActive {
-            return GizmoScreenLayout.hitTest(at: point, project: project, ringsOnly: true)
+            guard let ring = GizmoScreenLayout.hitTest(at: point, project: project, ringsOnly: true),
+                  !MoveGizmoOverlay.isHiddenByPivot(ring, project: project, scale: false) else { return nil }
+            return ring
         }
-        let part = GizmoScreenLayout.hitTest(at: point, project: project)
+        var part = GizmoScreenLayout.hitTest(at: point, project: project)
+        // A handle the centre dot covers is hidden, so it can't be grabbed.
+        if let hidden = part, MoveGizmoOverlay.isHiddenByPivot(
+            hidden, project: project, scale: viewModel.gizmoIsScale) {
+            part = nil
+        }
         // A face translates, it doesn't rotate — ignore ring hits there so a
         // grab near the (hidden) arcs doesn't try to fold the solid.
         if let part, part.isRing, !viewModel.gizmoAllowsRotation { return nil }
